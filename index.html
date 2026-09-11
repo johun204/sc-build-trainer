@@ -19,8 +19,8 @@
       <select id="boSelect" aria-label="빌드오더 선택"></select>
     </div>
     <div class="resources" id="resources">
-      <span class="res res-mineral"><i class="dot dot-mineral"></i><b id="rMinerals">50</b></span>
-      <span class="res res-gas"><i class="dot dot-gas"></i><b id="rGas">0</b></span>
+      <span class="res res-mineral"><i class="dot dot-mineral"></i><b id="rMinerals">50</b><small id="rMineralRate">+0.0/초</small></span>
+      <span class="res res-gas"><i class="dot dot-gas"></i><b id="rGas">0</b><small id="rGasRate">+0.0/초</small></span>
       <span class="res res-supply"><i class="dot dot-supply"></i><b id="rSupply">4/10</b></span>
       <span class="res res-workers"><i class="dot dot-worker"></i><b id="rWorkers">4</b></span>
       <span class="res res-time"><i class="dot dot-time"></i><b id="rTime">0:00</b></span>
@@ -45,8 +45,10 @@
     </section>
 
     <section class="panel panel-info" aria-label="현황">
-      <h2>현황</h2>
+      <h2>건설 현황 <span class="hint-inline">(누르면 생산 패널 전환)</span></h2>
       <div class="info-grid" id="buildingStatus"></div>
+      <h3>보유 유닛</h3>
+      <div class="unit-grid" id="unitStatus"></div>
       <h3>최근 행동</h3>
       <ul class="log-list" id="logList"></ul>
     </section>
@@ -57,11 +59,13 @@
         <button id="gasMinus" class="stepbtn">-</button>
         <b id="gasCount">0</b>
         <button id="gasPlus" class="stepbtn">+</button>
+        <small id="gasInfo"></small>
       </div>
-      <h3>건물</h3>
+      <h3>건물 건설</h3>
       <div class="cmd-grid" id="buildGrid"></div>
-      <h3>유닛</h3>
-      <div class="cmd-grid" id="unitGrid"></div>
+      <h3>생산</h3>
+      <div class="tab-row" id="prodTabs"></div>
+      <div id="prodPanel"></div>
     </section>
   </main>
 </div>

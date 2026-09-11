@@ -1,125 +1,153 @@
 /*
   StarCraft: Brood War 빌드오더 연습기 - 데이터 테이블
-  비용/시간/인구수 수치는 실제 게임 값에 최대한 가깝게 맞춘 "연습용 근사치"입니다.
-  (일꾼 채집 속도 등은 커뮤니티에서 통용되는 근사 공식을 사용했습니다.)
+  비용/생산시간은 Liquipedia StarCraft Brood War Wiki(Mining, Terran/Zerg/Protoss
+  Building/Unit Statistics)에서 조사한 실제 수치(Fastest 기준 초 단위)를 사용했습니다.
+
+  채집 공식(Mining 문서 근거):
+  - 일꾼은 미네랄 패치당 "포화(saturation)" 개념이 있음: 패치 1개당 일꾼 1기(=1.0x)까지는
+    풀 속도로 채집하고, 1.0x~3.0x(패치당 최대 3기) 구간은 훨씬 느린 추가 속도로만 증가하며,
+    3.0x를 넘는 일꾼은 채집량에 전혀 기여하지 않음(대기만 함).
+  - 종족별 분당 채집량(풀 속도): SCV 65.0 / 드론 67.1 / 프로브 68.1 (실측치)
+    포화 초과 구간 추가 채집량은 대략 풀 속도의 0.6배로 근사.
+  - 가스는 한 건물당 일꾼 3기가 풀 포화이며, 4기째부터는 대기(딜레이)만 발생하고
+    추가 채집량이 없음. 풀 속도는 종족 공통 분당 약 103.
 */
 
-// 일꾼 1명당 초당 채집량 근사치 (미네랄/가스 공통)
-const GATHER_RATE_PER_WORKER = 0.70;
-// 저그 라바 재생 주기(초)
+const GATHER_TABLE = {
+  terran:  { soloPerMin: 65.0, marginalPerMin: 39.0 },
+  zerg:    { soloPerMin: 67.1, marginalPerMin: 67.1 * 0.6 },
+  protoss: { soloPerMin: 68.1, marginalPerMin: 68.1 * 0.6 },
+};
+const GAS_PER_MIN_PER_WORKER = 103;
+const PATCHES_PER_BASE = 8;
+const GAS_CAP_PER_BUILDING = 3;
 const LARVA_SPAWN_INTERVAL = 15;
 const LARVA_CAP_PER_HATCH = 3;
 
+function mineralRatePerSec(raceId, mineralWorkers, patches) {
+  if (patches <= 0 || mineralWorkers <= 0) return 0;
+  const g = GATHER_TABLE[raceId];
+  const solo = g.soloPerMin / 60, marginal = g.marginalPerMin / 60;
+  const sat = patches, max = patches * 3;
+  if (mineralWorkers <= sat) return mineralWorkers * solo;
+  const extra = Math.min(mineralWorkers, max) - sat;
+  return sat * solo + extra * marginal;
+}
+function gasRatePerSec(effectiveGasWorkers) {
+  return effectiveGasWorkers * (GAS_PER_MIN_PER_WORKER / 60);
+}
+
 const RACES = {
   terran: {
-    id: 'terran', name: '테란', workerName: 'SCV', mainBuildingId: 'command_center',
+    id: 'terran', name: '테란', workerName: 'SCV', workerUnit: 'scv', mainBuildingId: 'command_center',
     startMinerals: 50, startGas: 0, startWorkers: 4, startSupplyUsed: 4, startSupplyCap: 10,
     gasBuildingId: 'refinery',
     buildings: {
-      command_center:   { name: '커맨드 센터', mineral: 400, gas: 0, time: 120, supply: 10, prereq: [], produces: ['scv'] },
-      supply_depot:      { name: '서플라이 디폿', mineral: 100, gas: 0, time: 40, supply: 8, prereq: [] },
-      refinery:          { name: '리파이너리', mineral: 100, gas: 0, time: 40, supply: 0, prereq: [] },
-      barracks:          { name: '배럭스', mineral: 150, gas: 0, time: 80, supply: 0, prereq: [], produces: ['marine', 'firebat', 'medic', 'ghost'] },
-      engineering_bay:   { name: '엔지니어링 베이', mineral: 125, gas: 0, time: 60, supply: 0, prereq: [] },
-      bunker:            { name: '벙커', mineral: 100, gas: 0, time: 30, supply: 0, prereq: ['barracks'] },
-      missile_turret:    { name: '미사일 터렛', mineral: 75, gas: 0, time: 30, supply: 0, prereq: ['engineering_bay'] },
-      academy:           { name: '아카데미', mineral: 150, gas: 0, time: 80, supply: 0, prereq: ['barracks'] },
-      factory:           { name: '팩토리', mineral: 200, gas: 100, time: 80, supply: 0, prereq: ['barracks'], produces: ['vulture', 'siege_tank', 'goliath'] },
-      machine_shop:      { name: '머신샵 (애드온)', mineral: 50, gas: 50, time: 40, supply: 0, prereq: ['factory'], isAddon: true },
-      armory:            { name: '아머리', mineral: 100, gas: 50, time: 80, supply: 0, prereq: ['factory'] },
-      starport:          { name: '스타포트', mineral: 150, gas: 100, time: 70, supply: 0, prereq: ['factory'], produces: ['wraith', 'dropship', 'science_vessel', 'battlecruiser', 'valkyrie'] },
-      control_tower:     { name: '컨트롤 타워 (애드온)', mineral: 50, gas: 50, time: 40, supply: 0, prereq: ['starport'], isAddon: true },
-      science_facility:  { name: '사이언스 퍼실리티', mineral: 100, gas: 150, time: 80, supply: 0, prereq: ['starport'] },
-      covert_ops:        { name: '커버트 옵스 (애드온)', mineral: 50, gas: 50, time: 40, supply: 0, prereq: ['science_facility'], isAddon: true },
-      physics_lab:       { name: '피직스 랩 (애드온)', mineral: 50, gas: 50, time: 50, supply: 0, prereq: ['science_facility'], isAddon: true },
+      command_center:   { name: '커맨드 센터', mineral: 400, gas: 0, time: 75.6, supply: 10, prereq: [], produces: ['scv'] },
+      supply_depot:      { name: '서플라이 디폿', mineral: 100, gas: 0, time: 25.2, supply: 8, prereq: [] },
+      refinery:          { name: '리파이너리', mineral: 100, gas: 0, time: 25.2, supply: 0, prereq: [] },
+      barracks:          { name: '배럭스', mineral: 150, gas: 0, time: 50.4, supply: 0, prereq: [], produces: ['marine', 'firebat', 'medic', 'ghost'] },
+      engineering_bay:   { name: '엔지니어링 베이', mineral: 125, gas: 0, time: 37.8, supply: 0, prereq: [] },
+      bunker:            { name: '벙커', mineral: 100, gas: 0, time: 18.9, supply: 0, prereq: ['barracks'] },
+      missile_turret:    { name: '미사일 터렛', mineral: 75, gas: 0, time: 18.9, supply: 0, prereq: ['engineering_bay'] },
+      academy:           { name: '아카데미', mineral: 150, gas: 0, time: 50.4, supply: 0, prereq: ['barracks'] },
+      factory:           { name: '팩토리', mineral: 200, gas: 100, time: 50.4, supply: 0, prereq: ['barracks'], produces: ['vulture', 'siege_tank', 'goliath'] },
+      machine_shop:      { name: '머신샵 (애드온)', mineral: 50, gas: 50, time: 25.2, supply: 0, prereq: ['factory'], isAddon: true },
+      armory:            { name: '아머리', mineral: 100, gas: 50, time: 50.4, supply: 0, prereq: ['factory'] },
+      starport:          { name: '스타포트', mineral: 150, gas: 100, time: 44.1, supply: 0, prereq: ['factory'], produces: ['wraith', 'dropship', 'science_vessel', 'battlecruiser', 'valkyrie'] },
+      control_tower:     { name: '컨트롤 타워 (애드온)', mineral: 50, gas: 50, time: 25.2, supply: 0, prereq: ['starport'], isAddon: true },
+      science_facility:  { name: '사이언스 퍼실리티', mineral: 100, gas: 150, time: 37.8, supply: 0, prereq: ['starport'] },
+      covert_ops:        { name: '커버트 옵스 (애드온)', mineral: 50, gas: 50, time: 25.2, supply: 0, prereq: ['science_facility'], isAddon: true },
+      physics_lab:       { name: '피직스 랩 (애드온)', mineral: 50, gas: 50, time: 25.2, supply: 0, prereq: ['science_facility'], isAddon: true },
     },
     units: {
-      scv:            { name: 'SCV', mineral: 50, gas: 0, time: 20, supply: 1, from: 'command_center', prereq: [] },
-      marine:         { name: '마린', mineral: 50, gas: 0, time: 24, supply: 1, from: 'barracks', prereq: [] },
-      firebat:        { name: '파이어뱃', mineral: 50, gas: 25, time: 24, supply: 1, from: 'barracks', prereq: ['academy'] },
-      medic:          { name: '메딕', mineral: 50, gas: 25, time: 30, supply: 1, from: 'barracks', prereq: ['academy'] },
-      ghost:          { name: '고스트', mineral: 25, gas: 75, time: 50, supply: 1, from: 'barracks', prereq: ['academy', 'covert_ops'] },
-      vulture:        { name: '벌처', mineral: 75, gas: 0, time: 30, supply: 2, from: 'factory', prereq: [] },
-      siege_tank:     { name: '시즈 탱크', mineral: 150, gas: 100, time: 50, supply: 2, from: 'factory', prereq: [] },
-      goliath:        { name: '골리앗', mineral: 100, gas: 50, time: 40, supply: 2, from: 'factory', prereq: ['armory'] },
-      wraith:         { name: '레이스', mineral: 150, gas: 100, time: 60, supply: 2, from: 'starport', prereq: [] },
-      dropship:       { name: '드랍십', mineral: 100, gas: 100, time: 50, supply: 2, from: 'starport', prereq: [] },
-      science_vessel: { name: '사이언스 베슬', mineral: 100, gas: 225, time: 80, supply: 2, from: 'starport', prereq: ['science_facility'] },
-      battlecruiser:  { name: '배틀크루저', mineral: 400, gas: 300, time: 133, supply: 6, from: 'starport', prereq: ['physics_lab'] },
-      valkyrie:       { name: '발키리', mineral: 250, gas: 125, time: 60, supply: 3, from: 'starport', prereq: ['armory'] },
+      scv:            { name: 'SCV', mineral: 50, gas: 0, time: 12.6, supply: 1, from: 'command_center', prereq: [] },
+      marine:         { name: '마린', mineral: 50, gas: 0, time: 15.12, supply: 1, from: 'barracks', prereq: [] },
+      firebat:        { name: '파이어뱃', mineral: 50, gas: 25, time: 15.12, supply: 1, from: 'barracks', prereq: ['academy'] },
+      medic:          { name: '메딕', mineral: 50, gas: 25, time: 18.9, supply: 1, from: 'barracks', prereq: ['academy'] },
+      ghost:          { name: '고스트', mineral: 25, gas: 75, time: 31.5, supply: 1, from: 'barracks', prereq: ['academy', 'covert_ops'] },
+      vulture:        { name: '벌처', mineral: 75, gas: 0, time: 18.9, supply: 2, from: 'factory', prereq: [] },
+      siege_tank:     { name: '시즈 탱크', mineral: 150, gas: 100, time: 31.5, supply: 2, from: 'factory', prereq: [] },
+      goliath:        { name: '골리앗', mineral: 100, gas: 50, time: 25.2, supply: 2, from: 'factory', prereq: ['armory'] },
+      wraith:         { name: '레이스', mineral: 150, gas: 100, time: 37.8, supply: 2, from: 'starport', prereq: [] },
+      dropship:       { name: '드랍십', mineral: 100, gas: 100, time: 31.5, supply: 2, from: 'starport', prereq: [] },
+      science_vessel: { name: '사이언스 베슬', mineral: 100, gas: 225, time: 50, supply: 2, from: 'starport', prereq: ['science_facility'] },
+      battlecruiser:  { name: '배틀크루저', mineral: 400, gas: 300, time: 83.79, supply: 6, from: 'starport', prereq: ['physics_lab'] },
+      valkyrie:       { name: '발키리', mineral: 250, gas: 125, time: 31.5, supply: 3, from: 'starport', prereq: ['armory'] },
     },
   },
 
   zerg: {
-    id: 'zerg', name: '저그', workerName: '드론', mainBuildingId: 'hatchery',
+    id: 'zerg', name: '저그', workerName: '드론', workerUnit: 'drone', mainBuildingId: 'hatchery',
     startMinerals: 50, startGas: 0, startWorkers: 4, startSupplyUsed: 4, startSupplyCap: 9,
     gasBuildingId: 'extractor',
     buildings: {
-      hatchery:          { name: '해처리', mineral: 300, gas: 0, time: 120, supply: 1, prereq: [], consumesWorker: true },
-      spawning_pool:     { name: '스포닝 풀', mineral: 200, gas: 0, time: 80, supply: 0, prereq: [], consumesWorker: true },
-      extractor:         { name: '익스트랙터', mineral: 50, gas: 0, time: 40, supply: 0, prereq: [], consumesWorker: true },
-      evolution_chamber: { name: '에볼루션 챔버', mineral: 75, gas: 0, time: 40, supply: 0, prereq: [], consumesWorker: true },
-      hydralisk_den:     { name: '히드라리스크 덴', mineral: 100, gas: 50, time: 40, supply: 0, prereq: ['spawning_pool'], consumesWorker: true },
-      lair:              { name: '레어 (변태)', mineral: 150, gas: 100, time: 100, supply: 0, prereq: ['hatchery', 'spawning_pool'], consumesWorker: false },
-      spire:             { name: '스파이어', mineral: 200, gas: 150, time: 120, supply: 0, prereq: ['lair'], consumesWorker: true },
-      queens_nest:       { name: '퀸즈 네스트', mineral: 150, gas: 100, time: 60, supply: 0, prereq: ['lair'], consumesWorker: true },
-      hive:              { name: '하이브 (변태)', mineral: 200, gas: 150, time: 100, supply: 0, prereq: ['queens_nest'], consumesWorker: false },
-      ultralisk_cavern:  { name: '울트라리스크 캐번', mineral: 150, gas: 200, time: 80, supply: 0, prereq: ['hive'], consumesWorker: true },
-      defiler_mound:     { name: '디파일러 마운드', mineral: 100, gas: 100, time: 60, supply: 0, prereq: ['hive'], consumesWorker: true },
+      hatchery:          { name: '해처리', mineral: 300, gas: 0, time: 75.6, supply: 1, prereq: [], consumesWorker: true },
+      spawning_pool:     { name: '스포닝 풀', mineral: 200, gas: 0, time: 50.4, supply: 0, prereq: [], consumesWorker: true },
+      extractor:         { name: '익스트랙터', mineral: 50, gas: 0, time: 25.2, supply: 0, prereq: [], consumesWorker: true },
+      evolution_chamber: { name: '에볼루션 챔버', mineral: 75, gas: 0, time: 25.2, supply: 0, prereq: [], consumesWorker: true },
+      hydralisk_den:     { name: '히드라리스크 덴', mineral: 100, gas: 50, time: 25.2, supply: 0, prereq: ['spawning_pool'], consumesWorker: true },
+      lair:              { name: '레어 (변태)', mineral: 150, gas: 100, time: 63, supply: 0, prereq: ['hatchery', 'spawning_pool'], consumesWorker: false },
+      spire:             { name: '스파이어', mineral: 200, gas: 150, time: 75.6, supply: 0, prereq: ['lair'], consumesWorker: true },
+      queens_nest:       { name: '퀸즈 네스트', mineral: 150, gas: 100, time: 37.8, supply: 0, prereq: ['lair'], consumesWorker: true },
+      hive:              { name: '하이브 (변태)', mineral: 200, gas: 150, time: 75.6, supply: 0, prereq: ['queens_nest'], consumesWorker: false },
+      ultralisk_cavern:  { name: '울트라리스크 캐번', mineral: 150, gas: 200, time: 50.4, supply: 0, prereq: ['hive'], consumesWorker: true },
+      defiler_mound:     { name: '디파일러 마운드', mineral: 100, gas: 100, time: 37.8, supply: 0, prereq: ['hive'], consumesWorker: true },
     },
+    // 저글링/스커지는 라바 1개에서 2기가 동시에 나오는 페어 유닛. cost/time은 페어 기준(단위당 수치 x2, 시간은 동일).
     units: {
-      drone:     { name: '드론', mineral: 50, gas: 0, time: 20, supply: 1, from: 'larva', prereq: [] },
-      overlord:  { name: '오버로드', mineral: 100, gas: 0, time: 40, supply: -8, from: 'larva', prereq: [] },
-      zergling:  { name: '저글링 x2', mineral: 50, gas: 0, time: 28, supply: 1, from: 'larva', prereq: ['spawning_pool'] },
-      hydralisk: { name: '히드라리스크', mineral: 75, gas: 25, time: 28, supply: 1, from: 'larva', prereq: ['hydralisk_den'] },
-      mutalisk:  { name: '뮤탈리스크', mineral: 100, gas: 100, time: 40, supply: 2, from: 'larva', prereq: ['spire'] },
-      scourge:   { name: '스커지 x2', mineral: 50, gas: 150, time: 40, supply: 1, from: 'larva', prereq: ['spire'] },
-      queen:     { name: '퀸', mineral: 100, gas: 100, time: 50, supply: 2, from: 'larva', prereq: ['queens_nest'] },
-      defiler:   { name: '디파일러', mineral: 50, gas: 150, time: 50, supply: 2, from: 'larva', prereq: ['defiler_mound'] },
-      ultralisk: { name: '울트라리스크', mineral: 200, gas: 200, time: 60, supply: 4, from: 'larva', prereq: ['ultralisk_cavern'] },
+      drone:     { name: '드론', mineral: 50, gas: 0, time: 12.6, supply: 1, from: 'larva', prereq: [] },
+      overlord:  { name: '오버로드', mineral: 100, gas: 0, time: 25, supply: 0, supplyProvide: 8, from: 'larva', prereq: [] },
+      zergling:  { name: '저글링 x2', mineral: 50, gas: 0, time: 18, supply: 1, count: 2, from: 'larva', prereq: ['spawning_pool'] },
+      hydralisk: { name: '히드라리스크', mineral: 75, gas: 25, time: 18, supply: 1, from: 'larva', prereq: ['hydralisk_den'] },
+      mutalisk:  { name: '뮤탈리스크', mineral: 100, gas: 100, time: 25, supply: 2, from: 'larva', prereq: ['spire'] },
+      scourge:   { name: '스커지 x2', mineral: 24, gas: 76, time: 19, supply: 1, count: 2, from: 'larva', prereq: ['spire'] },
+      queen:     { name: '퀸', mineral: 100, gas: 100, time: 31.5, supply: 2, from: 'larva', prereq: ['queens_nest'] },
+      defiler:   { name: '디파일러', mineral: 50, gas: 150, time: 31.5, supply: 2, from: 'larva', prereq: ['defiler_mound'] },
+      ultralisk: { name: '울트라리스크', mineral: 200, gas: 200, time: 38, supply: 4, from: 'larva', prereq: ['ultralisk_cavern'] },
     },
   },
 
   protoss: {
-    id: 'protoss', name: '프로토스', workerName: '프로브', mainBuildingId: 'nexus',
+    id: 'protoss', name: '프로토스', workerName: '프로브', workerUnit: 'probe', mainBuildingId: 'nexus',
     startMinerals: 50, startGas: 0, startWorkers: 4, startSupplyUsed: 4, startSupplyCap: 9,
     gasBuildingId: 'assimilator',
     buildings: {
-      nexus:               { name: '넥서스', mineral: 400, gas: 0, time: 120, supply: 9, prereq: [], produces: ['probe'] },
-      pylon:                { name: '파일런', mineral: 100, gas: 0, time: 40, supply: 8, prereq: [] },
-      assimilator:          { name: '어시밀레이터', mineral: 100, gas: 0, time: 40, supply: 0, prereq: [] },
-      gateway:              { name: '게이트웨이', mineral: 150, gas: 0, time: 60, supply: 0, prereq: ['pylon'], produces: ['zealot', 'dragoon', 'high_templar', 'dark_templar'] },
-      forge:                { name: '포지', mineral: 150, gas: 0, time: 40, supply: 0, prereq: ['pylon'] },
-      photon_cannon:        { name: '포톤 캐논', mineral: 150, gas: 0, time: 40, supply: 0, prereq: ['forge'] },
-      cybernetics_core:     { name: '사이버네틱스 코어', mineral: 200, gas: 0, time: 60, supply: 0, prereq: ['gateway'] },
-      citadel_of_adun:      { name: '시타델 오브 아둔', mineral: 150, gas: 0, time: 60, supply: 0, prereq: ['gateway'] },
-      templar_archives:     { name: '템플러 아카이브', mineral: 150, gas: 200, time: 60, supply: 0, prereq: ['citadel_of_adun', 'cybernetics_core'] },
-      robotics_facility:    { name: '로보틱스 퍼실리티', mineral: 200, gas: 200, time: 80, supply: 0, prereq: ['cybernetics_core'] },
-      observatory:          { name: '옵저버토리', mineral: 50, gas: 100, time: 40, supply: 0, prereq: ['robotics_facility'] },
-      robotics_support_bay: { name: '로보틱스 서포트 베이', mineral: 150, gas: 100, time: 30, supply: 0, prereq: ['robotics_facility'] },
-      stargate:             { name: '스타게이트', mineral: 150, gas: 150, time: 70, supply: 0, prereq: ['cybernetics_core'] },
-      fleet_beacon:         { name: '플릿 비컨', mineral: 300, gas: 200, time: 60, supply: 0, prereq: ['stargate'] },
-      arbiter_tribunal:     { name: '아비터 트리뷰널', mineral: 200, gas: 150, time: 60, supply: 0, prereq: ['templar_archives', 'stargate'] },
+      nexus:               { name: '넥서스', mineral: 400, gas: 0, time: 75.6, supply: 9, prereq: [], produces: ['probe'] },
+      pylon:                { name: '파일런', mineral: 100, gas: 0, time: 18.9, supply: 8, prereq: [] },
+      assimilator:          { name: '어시밀레이터', mineral: 100, gas: 0, time: 25.2, supply: 0, prereq: [] },
+      gateway:              { name: '게이트웨이', mineral: 150, gas: 0, time: 37.8, supply: 0, prereq: ['pylon'], produces: ['zealot', 'dragoon', 'high_templar', 'dark_templar'] },
+      forge:                { name: '포지', mineral: 150, gas: 0, time: 25.2, supply: 0, prereq: ['pylon'] },
+      photon_cannon:        { name: '포톤 캐논', mineral: 150, gas: 0, time: 31.5, supply: 0, prereq: ['forge'] },
+      cybernetics_core:     { name: '사이버네틱스 코어', mineral: 200, gas: 0, time: 37.8, supply: 0, prereq: ['gateway'] },
+      citadel_of_adun:      { name: '시타델 오브 아둔', mineral: 150, gas: 100, time: 37.8, supply: 0, prereq: ['gateway'] },
+      templar_archives:     { name: '템플러 아카이브', mineral: 150, gas: 200, time: 37.8, supply: 0, prereq: ['citadel_of_adun', 'cybernetics_core'] },
+      robotics_facility:    { name: '로보틱스 퍼실리티', mineral: 200, gas: 200, time: 50.4, supply: 0, prereq: ['cybernetics_core'] },
+      observatory:          { name: '옵저버토리', mineral: 50, gas: 100, time: 18.9, supply: 0, prereq: ['robotics_facility'] },
+      robotics_support_bay: { name: '로보틱스 서포트 베이', mineral: 150, gas: 100, time: 18.9, supply: 0, prereq: ['robotics_facility'] },
+      stargate:             { name: '스타게이트', mineral: 150, gas: 150, time: 44.1, supply: 0, prereq: ['cybernetics_core'] },
+      fleet_beacon:         { name: '플릿 비컨', mineral: 300, gas: 200, time: 37.8, supply: 0, prereq: ['stargate'] },
+      arbiter_tribunal:     { name: '아비터 트리뷰널', mineral: 200, gas: 150, time: 37.8, supply: 0, prereq: ['templar_archives', 'stargate'] },
     },
     units: {
-      probe:        { name: '프로브', mineral: 50, gas: 0, time: 20, supply: 1, from: 'nexus', prereq: [] },
-      zealot:       { name: '질럿', mineral: 100, gas: 0, time: 40, supply: 2, from: 'gateway', prereq: [] },
-      dragoon:      { name: '드라군', mineral: 125, gas: 50, time: 50, supply: 2, from: 'gateway', prereq: ['cybernetics_core'] },
-      high_templar: { name: '하이템플러', mineral: 50, gas: 150, time: 50, supply: 2, from: 'gateway', prereq: ['templar_archives'] },
-      dark_templar: { name: '다크템플러', mineral: 125, gas: 100, time: 50, supply: 2, from: 'gateway', prereq: ['templar_archives'] },
-      shuttle:      { name: '셔틀', mineral: 200, gas: 0, time: 60, supply: 2, from: 'robotics_facility', prereq: [] },
-      reaver:       { name: '리버', mineral: 200, gas: 100, time: 70, supply: 4, from: 'robotics_facility', prereq: ['robotics_support_bay'] },
-      observer:     { name: '옵저버', mineral: 25, gas: 75, time: 40, supply: 1, from: 'robotics_facility', prereq: ['observatory'] },
-      corsair:      { name: '커세어', mineral: 150, gas: 100, time: 40, supply: 2, from: 'stargate', prereq: [] },
-      scout:        { name: '스카우트', mineral: 275, gas: 125, time: 80, supply: 3, from: 'stargate', prereq: [] },
-      carrier:      { name: '캐리어', mineral: 350, gas: 250, time: 140, supply: 6, from: 'stargate', prereq: ['fleet_beacon'] },
-      arbiter:      { name: '아비터', mineral: 100, gas: 350, time: 160, supply: 4, from: 'stargate', prereq: ['arbiter_tribunal'] },
+      probe:        { name: '프로브', mineral: 50, gas: 0, time: 12.6, supply: 1, from: 'nexus', prereq: [] },
+      zealot:       { name: '질럿', mineral: 100, gas: 0, time: 25.2, supply: 2, from: 'gateway', prereq: [] },
+      dragoon:      { name: '드라군', mineral: 125, gas: 50, time: 31.5, supply: 2, from: 'gateway', prereq: ['cybernetics_core'] },
+      high_templar: { name: '하이템플러', mineral: 50, gas: 150, time: 31.5, supply: 2, from: 'gateway', prereq: ['templar_archives'] },
+      dark_templar: { name: '다크템플러', mineral: 125, gas: 100, time: 31.5, supply: 2, from: 'gateway', prereq: ['templar_archives'] },
+      shuttle:      { name: '셔틀', mineral: 200, gas: 0, time: 37.8, supply: 2, from: 'robotics_facility', prereq: [] },
+      reaver:       { name: '리버', mineral: 200, gas: 100, time: 44, supply: 4, from: 'robotics_facility', prereq: ['robotics_support_bay'] },
+      observer:     { name: '옵저버', mineral: 25, gas: 75, time: 25.2, supply: 1, from: 'robotics_facility', prereq: ['observatory'] },
+      corsair:      { name: '커세어', mineral: 150, gas: 100, time: 25.2, supply: 2, from: 'stargate', prereq: [] },
+      scout:        { name: '스카우트', mineral: 275, gas: 125, time: 50, supply: 3, from: 'stargate', prereq: [] },
+      carrier:      { name: '캐리어', mineral: 350, gas: 250, time: 88, supply: 6, from: 'stargate', prereq: ['fleet_beacon'] },
+      arbiter:      { name: '아비터', mineral: 100, gas: 350, time: 100.8, supply: 4, from: 'stargate', prereq: ['arbiter_tribunal'] },
     },
   },
 };
 
 // 빌드오더 트리거: { supply } 또는 { time(초) } 중 하나 이상 지정. 둘 다 있으면 둘 다 표시.
-// action: { kind: 'build'|'train'|'gas', id, count }
+// action: { kind: 'build'|'train', id }
 const BUILD_ORDERS = {
   terran: [
     {

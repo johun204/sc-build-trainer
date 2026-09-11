@@ -27,29 +27,33 @@ function initState(raceId) {
     time: 0,
     minerals: race.startMinerals,
     gas: race.startGas,
-    workers: race.startWorkers,
     gasWorkers: 0,
     supplyUsed: race.startSupplyUsed,
     supplyCap: race.startSupplyCap,
-    buildings: { [race.mainBuildingId]: { completed: 1, inProgress: [] } },
-    production: {},
-    zergActive: [],
-    larva: raceId === 'zerg' ? { count: 3, timer: 0 } : null,
+    buildingsByType: {},
+    unitCounts: { [race.workerUnit]: race.startWorkers },
+    zergLarva: raceId === 'zerg' ? { count: 3, timer: 0 } : null,
+    zergActiveMorphs: [],
+    selectedBuildingType: race.mainBuildingId,
     log: [],
     speed: 1,
+    nextInstId: 1,
   };
-  Object.entries(race.buildings).forEach(([id, b]) => {
-    if (b.produces) s.production[id] = { queue: [], active: [] };
-  });
+  s.buildingsByType[race.mainBuildingId] = [{ id: s.nextInstId++, status: 'ready', startAt: 0, doneAt: 0, queue: [], active: null }];
   return s;
 }
 
-function getBuilding(typeId) {
-  if (!S.buildings[typeId]) S.buildings[typeId] = { completed: 0, inProgress: [] };
-  return S.buildings[typeId];
-}
-function completedCount(typeId) { return S.buildings[typeId]?.completed || 0; }
+// ---------- 조회 헬퍼 ----------
+function instancesOf(typeId) { return S.buildingsByType[typeId] || []; }
+function readyInstances(typeId) { return instancesOf(typeId).filter(i => i.status === 'ready'); }
+function constructingInstances(typeId) { return instancesOf(typeId).filter(i => i.status === 'constructing'); }
+function completedCount(typeId) { return readyInstances(typeId).length; }
 function prereqMet(list) { return (list || []).every(id => completedCount(id) > 0); }
+function totalWorkers() { return S.unitCounts[S.race.workerUnit] || 0; }
+function mineralWorkers() { return Math.max(0, totalWorkers() - S.gasWorkers); }
+function gasBuildingCount() { return completedCount(S.race.gasBuildingId); }
+function effectiveGasWorkers() { return Math.min(S.gasWorkers, gasBuildingCount() * GAS_CAP_PER_BUILDING); }
+function patches() { return PATCHES_PER_BASE * completedCount(S.race.mainBuildingId); }
 
 function logAction(text) {
   S.log.push({ t: S.time, text });
@@ -63,14 +67,15 @@ function doBuild(typeId) {
   if (!b) return;
   if (!prereqMet(b.prereq)) { toast('선행 건물이 필요합니다'); return; }
   if (S.minerals < b.mineral || S.gas < b.gas) { toast('자원이 부족합니다'); return; }
-  if (b.consumesWorker && S.workers <= 0) { toast('일꾼이 없습니다'); return; }
+  if (b.consumesWorker && totalWorkers() <= 0) { toast('일꾼이 없습니다'); return; }
   S.minerals -= b.mineral;
   S.gas -= b.gas;
   if (b.consumesWorker) {
-    S.workers -= 1;
-    if (S.gasWorkers > S.workers) S.gasWorkers = S.workers;
+    S.unitCounts[S.race.workerUnit] -= 1;
+    if (S.gasWorkers > totalWorkers()) S.gasWorkers = totalWorkers();
   }
-  getBuilding(typeId).inProgress.push({ doneAt: S.time + b.time });
+  if (!S.buildingsByType[typeId]) S.buildingsByType[typeId] = [];
+  S.buildingsByType[typeId].push({ id: S.nextInstId++, status: 'constructing', startAt: S.time, doneAt: S.time + b.time, queue: [], active: null });
   logAction(`${b.name} ${b.isAddon ? '건설(애드온)' : '착공'} — ${fmtTime(S.time)}`);
   checkBuildOrderStep({ kind: 'build', id: typeId });
   renderAll();
@@ -81,33 +86,40 @@ function doTrain(unitId) {
   if (!u) return;
   if (!prereqMet(u.prereq)) { toast('테크(선행 건물)가 부족합니다'); return; }
   if (S.minerals < u.mineral || S.gas < u.gas) { toast('자원이 부족합니다'); return; }
-  const supplyCost = Math.max(0, u.supply);
-  if (S.supplyUsed + supplyCost > S.supplyCap) { toast('서플라이(인구수)가 부족합니다'); return; }
+  if (S.supplyUsed + u.supply > S.supplyCap) { toast('서플라이(인구수)가 부족합니다'); return; }
 
   if (S.raceId === 'zerg') {
-    if (S.larva.count <= 0) { toast('라바가 없습니다'); return; }
-    S.larva.count -= 1;
-    S.zergActive.push({ unitId, doneAt: S.time + u.time });
+    if (S.zergLarva.count <= 0) { toast('라바가 없습니다'); return; }
+    S.zergLarva.count -= 1;
+    S.zergActiveMorphs.push({ unitId, startAt: S.time, doneAt: S.time + u.time });
   } else {
-    const bcount = completedCount(u.from);
-    if (bcount <= 0) { toast('생산 건물이 없습니다'); return; }
-    const prod = S.production[u.from];
-    if (prod.queue.length + prod.active.length >= bcount * 5) { toast('생산 대기열이 가득 찼습니다'); return; }
-    prod.queue.push({ unitId });
+    const list = readyInstances(u.from);
+    if (list.length === 0) { toast('생산 건물이 없습니다'); return; }
+    let best = null, bestLoad = Infinity;
+    list.forEach(inst => {
+      const load = inst.queue.length + (inst.active ? 1 : 0);
+      if (load < 5 && load < bestLoad) { best = inst; bestLoad = load; }
+    });
+    if (!best) { toast('생산 대기열이 가득 찼습니다 (건물당 최대 5)'); return; }
+    best.queue.push({ unitId });
   }
   S.minerals -= u.mineral;
   S.gas -= u.gas;
-  S.supplyUsed += supplyCost;
+  S.supplyUsed += u.supply;
   logAction(`${u.name} 생산 시작 — ${fmtTime(S.time)}`);
   checkBuildOrderStep({ kind: 'train', id: unitId });
   renderAll();
 }
 
 function setGasWorkers(n) {
-  const gasBuiltCount = completedCount(S.race.gasBuildingId);
-  const max = Math.min(S.workers, gasBuiltCount * 3);
-  S.gasWorkers = Math.max(0, Math.min(n, max));
-  renderTop();
+  S.gasWorkers = Math.max(0, Math.min(n, totalWorkers()));
+  renderAll();
+}
+
+function selectBuildingType(typeId) {
+  S.selectedBuildingType = typeId;
+  renderProductionPanel();
+  renderBuildingStatus();
 }
 
 // ---------- 틱 ----------
@@ -115,53 +127,39 @@ function tick(dt) {
   if (dt <= 0) return;
   S.time += dt;
 
-  const mineralWorkers = Math.max(0, S.workers - S.gasWorkers);
-  const gasOk = completedCount(S.race.gasBuildingId) > 0;
-  if (!gasOk && S.gasWorkers > 0) S.gasWorkers = 0;
-  S.minerals += mineralWorkers * GATHER_RATE_PER_WORKER * dt;
-  if (gasOk) S.gas += S.gasWorkers * GATHER_RATE_PER_WORKER * dt;
+  S.minerals += mineralRatePerSec(S.raceId, mineralWorkers(), patches()) * dt;
+  if (gasBuildingCount() > 0) S.gas += gasRatePerSec(effectiveGasWorkers()) * dt;
 
-  // 건물 완공 처리
-  Object.entries(S.buildings).forEach(([typeId, rec]) => {
+  // 건물 완공 + 생산 가능 건물의 유닛 큐 처리
+  Object.entries(S.buildingsByType).forEach(([typeId, list]) => {
     const b = S.race.buildings[typeId];
-    rec.inProgress = rec.inProgress.filter(item => {
-      if (item.doneAt <= S.time) {
-        rec.completed += 1;
+    list.forEach(inst => {
+      if (inst.status === 'constructing' && inst.doneAt <= S.time) {
+        inst.status = 'ready';
         S.supplyCap += b.supply || 0;
-        return false;
       }
-      return true;
+      if (inst.status === 'ready' && b.produces) {
+        if (inst.active && inst.active.doneAt <= S.time) {
+          onUnitComplete(inst.active.unitId);
+          inst.active = null;
+        }
+        if (!inst.active && inst.queue.length > 0) {
+          const item = inst.queue.shift();
+          inst.active = { unitId: item.unitId, startAt: S.time, doneAt: S.time + S.race.units[item.unitId].time };
+        }
+      }
     });
   });
 
-  // 유닛 생산 (테란/프로토스: 건물별 큐)
-  if (S.raceId !== 'zerg') {
-    Object.entries(S.production).forEach(([typeId, prod]) => {
-      const cap = completedCount(typeId);
-      prod.active = prod.active.filter(item => {
-        if (item.doneAt <= S.time) {
-          onUnitComplete(item.unitId);
-          return false;
-        }
-        return true;
-      });
-      while (prod.active.length < cap && prod.queue.length > 0) {
-        const item = prod.queue.shift();
-        item.doneAt = S.time + S.race.units[item.unitId].time;
-        prod.active.push(item);
-      }
-    });
-  } else {
-    // 저그 라바
-    const hatchCount = completedCount('hatchery');
-    const cap = hatchCount * LARVA_CAP_PER_HATCH;
-    S.larva.timer += dt;
-    while (S.larva.timer >= LARVA_SPAWN_INTERVAL) {
-      S.larva.timer -= LARVA_SPAWN_INTERVAL;
-      S.larva.count = Math.min(cap, S.larva.count + 1);
+  if (S.raceId === 'zerg') {
+    const cap = completedCount('hatchery') * LARVA_CAP_PER_HATCH;
+    S.zergLarva.timer += dt;
+    while (S.zergLarva.timer >= LARVA_SPAWN_INTERVAL) {
+      S.zergLarva.timer -= LARVA_SPAWN_INTERVAL;
+      S.zergLarva.count = Math.min(cap, S.zergLarva.count + 1);
     }
-    if (S.larva.count > cap) S.larva.count = cap;
-    S.zergActive = S.zergActive.filter(item => {
+    if (S.zergLarva.count > cap) S.zergLarva.count = cap;
+    S.zergActiveMorphs = S.zergActiveMorphs.filter(item => {
       if (item.doneAt <= S.time) { onUnitComplete(item.unitId); return false; }
       return true;
     });
@@ -172,12 +170,8 @@ function tick(dt) {
 
 function onUnitComplete(unitId) {
   const u = S.race.units[unitId];
-  if (unitId === 'scv' || unitId === 'probe' || unitId === 'drone') {
-    S.workers += 1;
-  }
-  if (u.supply < 0) { // 오버로드 등: 완공 시 서플라이 제공
-    S.supplyCap += -u.supply;
-  }
+  S.unitCounts[unitId] = (S.unitCounts[unitId] || 0) + (u.count || 1);
+  if (u.supplyProvide) S.supplyCap += u.supplyProvide;
 }
 
 // ---------- 빌드오더 체크 ----------
@@ -200,29 +194,54 @@ function checkBuildOrderStep(action) {
 
 // ---------- 렌더링 ----------
 function renderTop() {
+  const mRate = mineralRatePerSec(S.raceId, mineralWorkers(), patches());
+  const gRate = gasBuildingCount() > 0 ? gasRatePerSec(effectiveGasWorkers()) : 0;
   document.getElementById('rMinerals').textContent = Math.floor(S.minerals);
+  document.getElementById('rMineralRate').textContent = `+${mRate.toFixed(1)}/초`;
   document.getElementById('rGas').textContent = Math.floor(S.gas);
+  document.getElementById('rGasRate').textContent = `+${gRate.toFixed(1)}/초`;
   const supplyEl = document.getElementById('rSupply');
   supplyEl.textContent = `${S.supplyUsed}/${S.supplyCap}`;
   supplyEl.classList.toggle('over', S.supplyUsed >= S.supplyCap);
-  document.getElementById('rWorkers').textContent = S.workers;
+  document.getElementById('rWorkers').textContent = totalWorkers();
   document.getElementById('rTime').textContent = fmtTime(S.time);
+
   document.getElementById('gasCount').textContent = S.gasWorkers;
+  const eff = effectiveGasWorkers();
+  const waste = S.gasWorkers - eff;
+  const gasInfoEl = document.getElementById('gasInfo');
+  gasInfoEl.textContent = waste > 0 ? `(포화 ${eff} / 유휴 대기 ${waste} — 가스 건물당 3기가 최적)` : `(포화 ${gasBuildingCount() * GAS_CAP_PER_BUILDING})`;
+  gasInfoEl.classList.toggle('warn', waste > 0);
+}
+
+function pctOf(startAt, doneAt) {
+  if (doneAt <= startAt) return 100;
+  return Math.max(0, Math.min(100, Math.round((S.time - startAt) / (doneAt - startAt) * 100)));
 }
 
 function renderBuildingStatus() {
   const el = document.getElementById('buildingStatus');
-  const rows = Object.entries(S.race.buildings).filter(([id]) => completedCount(id) > 0 || (S.buildings[id]?.inProgress.length));
-  el.innerHTML = rows.map(([id, b]) => {
-    const rec = S.buildings[id] || { completed: 0, inProgress: [] };
-    const progressTxt = rec.inProgress.length ? ` (건설중 x${rec.inProgress.length})` : '';
-    return `<div class="info-row"><span class="bldname">${b.name}</span><span class="bldcount">${rec.completed}<span class="bldprog">${progressTxt}</span></span></div>`;
-  }).join('') || '<div class="info-row"><span class="bldname">-</span></div>';
+  const entries = Object.entries(S.race.buildings).filter(([id]) => instancesOf(id).length > 0);
+  el.innerHTML = entries.map(([id, b]) => {
+    const ready = completedCount(id);
+    const constructing = constructingInstances(id);
+    const bars = constructing.map(inst => `<div class="pbar mini"><div class="pbar-fill" style="width:${pctOf(inst.startAt, inst.doneAt)}%"></div></div>`).join('');
+    const clickable = !!b.produces && ready > 0;
+    const selected = S.selectedBuildingType === id;
+    return `<div class="bld-card ${clickable ? 'clickable' : ''} ${selected ? 'selected' : ''}" ${clickable ? `data-select="${id}"` : ''}>
+      <div class="bld-head"><span>${b.name}</span><span class="bldcount">${ready}${constructing.length ? ` (건설중 x${constructing.length})` : ''}</span></div>
+      ${bars}
+    </div>`;
+  }).join('') || '<p class="hint">아직 건설된 건물이 없습니다</p>';
+}
 
-  if (S.raceId === 'zerg') {
-    const hatchCount = completedCount('hatchery');
-    el.innerHTML += `<div class="info-row"><span class="bldname">라바</span><span class="bldcount">${S.larva.count}/${hatchCount * LARVA_CAP_PER_HATCH}</span></div>`;
-  }
+function renderUnitStatus() {
+  const el = document.getElementById('unitStatus');
+  const entries = Object.entries(S.unitCounts).filter(([, c]) => c > 0);
+  el.innerHTML = entries.map(([id, c]) => {
+    const u = S.race.units[id];
+    return `<div class="unit-tile"><span class="uname">${u.name}</span><span class="ucount">${c}</span></div>`;
+  }).join('') || '<p class="hint">-</p>';
 }
 
 function renderLog() {
@@ -259,7 +278,7 @@ function renderBuildOrder() {
 
 function affordable(mineral, gas) { return S.minerals >= mineral && S.gas >= gas; }
 
-function renderCommandCard() {
+function renderBuildGrid() {
   const buildEl = document.getElementById('buildGrid');
   buildEl.innerHTML = Object.entries(S.race.buildings).map(([id, b]) => {
     const ok = prereqMet(b.prereq) && affordable(b.mineral, b.gas);
@@ -268,24 +287,61 @@ function renderCommandCard() {
       <span class="cost">${b.mineral}${b.gas ? '/' + b.gas : ''}${b.supply ? ' Su+' + b.supply : ''}</span>
     </button>`;
   }).join('');
+}
 
-  const unitEl = document.getElementById('unitGrid');
-  unitEl.innerHTML = Object.entries(S.race.units).map(([id, u]) => {
-    const ok = prereqMet(u.prereq) && affordable(u.mineral, u.gas) && (S.supplyUsed + Math.max(0, u.supply) <= S.supplyCap);
-    return `<button class="cmdbtn" data-train="${id}" ${ok ? '' : 'disabled'}>
-      <span>${u.name}</span>
-      <span class="cost">${u.mineral}${u.gas ? '/' + u.gas : ''}</span>
-    </button>`;
+function unitButtonHtml(id, u, requireLarva) {
+  const ok = prereqMet(u.prereq) && affordable(u.mineral, u.gas) && (S.supplyUsed + u.supply <= S.supplyCap) && (!requireLarva || S.zergLarva.count > 0);
+  return `<button class="cmdbtn" data-train="${id}" ${ok ? '' : 'disabled'}>
+    <span>${u.name}</span>
+    <span class="cost">${u.mineral}${u.gas ? '/' + u.gas : ''}</span>
+  </button>`;
+}
+
+function renderProductionPanel() {
+  const el = document.getElementById('prodPanel');
+  const tabsEl = document.getElementById('prodTabs');
+
+  if (S.raceId === 'zerg') {
+    tabsEl.innerHTML = '';
+    tabsEl.style.display = 'none';
+    const hatchCount = completedCount('hatchery');
+    const units = Object.entries(S.race.units).map(([id, u]) => unitButtonHtml(id, u, true)).join('');
+    const morphs = S.zergActiveMorphs.map(m => {
+      const u = S.race.units[m.unitId];
+      return `<div class="queue-row"><span>${u.name}</span><div class="pbar"><div class="pbar-fill" style="width:${pctOf(m.startAt, m.doneAt)}%"></div></div></div>`;
+    }).join('') || '<p class="hint">생산중인 유닛 없음</p>';
+    el.innerHTML = `<div class="larva-info">라바 ${S.zergLarva.count}/${hatchCount * LARVA_CAP_PER_HATCH}</div><div class="cmd-grid">${units}</div><h3>생산 진행</h3><div class="queue-list">${morphs}</div>`;
+    return;
+  }
+
+  tabsEl.style.display = '';
+  const producerTypes = Object.entries(S.race.buildings).filter(([id, b]) => b.produces && completedCount(id) > 0);
+  tabsEl.innerHTML = producerTypes.map(([id, b]) => `<button class="tabbtn ${S.selectedBuildingType === id ? 'active' : ''}" data-select="${id}">${b.name} (${completedCount(id)})</button>`).join('');
+
+  const typeId = S.selectedBuildingType;
+  if (!typeId || completedCount(typeId) <= 0) {
+    el.innerHTML = '<p class="hint">위에서 생산할 건물을 선택하세요</p>';
+    return;
+  }
+  const b = S.race.buildings[typeId];
+  const units = b.produces.map(uid => unitButtonHtml(uid, S.race.units[uid], false)).join('');
+  const rows = readyInstances(typeId).map((inst, i) => {
+    if (inst.active) {
+      const u = S.race.units[inst.active.unitId];
+      const dots = inst.queue.length ? `<span class="qdots">대기 ${inst.queue.length}</span>` : '';
+      return `<div class="queue-row"><span>#${i + 1} ${u.name}</span><div class="pbar"><div class="pbar-fill" style="width:${pctOf(inst.active.startAt, inst.active.doneAt)}%"></div></div>${dots}</div>`;
+    }
+    return `<div class="queue-row idle"><span>#${i + 1} 대기중(유휴)</span></div>`;
   }).join('');
-
-  const gasBuilt = completedCount(S.race.gasBuildingId) > 0;
-  document.getElementById('gasRow').style.opacity = gasBuilt ? 1 : .4;
+  el.innerHTML = `<div class="cmd-grid">${units}</div><h3>${b.name} 생산 현황</h3><div class="queue-list">${rows}</div>`;
 }
 
 function renderAll() {
   renderTop();
   renderBuildingStatus();
-  renderCommandCard();
+  renderUnitStatus();
+  renderBuildGrid();
+  renderProductionPanel();
 }
 
 // ---------- 셀렉트 박스 ----------
@@ -335,9 +391,17 @@ function wireEvents() {
     const btn = e.target.closest('[data-build]');
     if (btn) doBuild(btn.dataset.build);
   });
-  document.getElementById('unitGrid').addEventListener('click', e => {
+  document.getElementById('prodPanel').addEventListener('click', e => {
     const btn = e.target.closest('[data-train]');
     if (btn) doTrain(btn.dataset.train);
+  });
+  document.getElementById('prodTabs').addEventListener('click', e => {
+    const btn = e.target.closest('[data-select]');
+    if (btn) selectBuildingType(btn.dataset.select);
+  });
+  document.getElementById('buildingStatus').addEventListener('click', e => {
+    const btn = e.target.closest('[data-select]');
+    if (btn) selectBuildingType(btn.dataset.select);
   });
 }
 
