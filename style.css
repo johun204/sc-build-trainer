@@ -124,17 +124,6 @@ h3 { margin-top: 14px; font-size: 12px; }
 .hint { color: var(--dim); font-size: 12px; margin: 4px 0; }
 .hint-inline { font-size: 10px; color: var(--dim); text-transform: none; letter-spacing: 0; font-weight: 400; }
 
-.info-grid { display: flex; flex-direction: column; gap: 6px; max-height: 26vh; overflow-y: auto; font-size: 13px; }
-.bld-card { border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; background: var(--panel-2); }
-.bld-card.clickable { cursor: pointer; }
-.bld-card.clickable:hover { border-color: var(--gold); }
-.bld-card.selected { border-color: var(--gold); background: #1c2440; }
-.bld-head { display: flex; justify-content: space-between; }
-.bld-head .bldcount { color: var(--gold); font-variant-numeric: tabular-nums; font-size: 12px; }
-.bld-progress-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
-.bld-remain { font-size: 10px; color: var(--dim); white-space: nowrap; }
-.cancelbtn { padding: 2px 8px; font-size: 10px; color: var(--danger); border-color: var(--danger); }
-
 .unit-grid { display: flex; flex-wrap: wrap; gap: 6px; max-height: 16vh; overflow-y: auto; }
 .unit-tile { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 12px; background: var(--panel-2); }
 .unit-tile .ucount { color: var(--gold); font-weight: 700; }
@@ -178,30 +167,42 @@ h3 { margin-top: 14px; font-size: 12px; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
-/* ---------- 베이스 뷰 (건물/일꾼 그래픽) ---------- */
-.baseview { margin-bottom: 12px; }
+/* ---------- 베이스 뷰 (건물/일꾼 그래픽) - 항상 화면에 표시되는 메인 영역 ---------- */
+.baseview-wrap {
+  position: sticky;
+  top: var(--topbar-h, 56px);
+  z-index: 8;
+  background: var(--bg);
+  border-bottom: 2px solid var(--border-gold);
+  padding: 8px 10px;
+}
 .bv-scene {
-  position: relative; height: 140px; background: #060a16;
+  position: relative; height: 180px; background: #060a16;
   border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+  transition: height .2s;
 }
-.bv-patches { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); display: flex; gap: 4px; }
+.baseview-wrap.compact .bv-scene { height: 74px; }
+.baseview-wrap.compact .bv-gallery { display: none; }
+.bv-patches { position: absolute; top: 8%; left: 12%; right: 12%; display: flex; justify-content: space-between; }
 .bv-patch { width: 7px; height: 7px; background: var(--mineral); border-radius: 2px; opacity: .85; }
-.bv-gas { position: absolute; bottom: 8px; right: 10px; width: 22px; height: 22px; background: var(--gas);
+.bv-gas { position: absolute; left: 88%; top: 80%; transform: translate(-50%, -50%); width: 22px; height: 22px; background: var(--gas);
   border-radius: 4px; font-size: 8px; display: flex; align-items: center; justify-content: center; color: #04150a; font-weight: 700; }
-.bv-base { position: absolute; left: 50%; top: 58%; transform: translate(-50%, -50%); z-index: 2; }
-.bv-worker { position: absolute; left: 50%; top: 58%; width: 6px; height: 6px; border-radius: 50%; margin: -3px; z-index: 1; animation-timing-function: linear; animation-iteration-count: infinite; }
-.bv-worker.mineral { background: var(--mineral); animation-name: bvMine; }
-.bv-worker.gas { background: var(--gas); animation-name: bvGas; }
-@keyframes bvMine {
-  0% { transform: translate(0, 0); }
-  50% { transform: translate(var(--dx, 0px), -46px); }
-  100% { transform: translate(0, 0); }
+.bv-base { position: absolute; left: 50%; top: 62%; transform: translate(-50%, -50%); z-index: 2; }
+.bv-worker {
+  position: absolute; width: 6px; height: 6px; border-radius: 50%;
+  transform: translate(-50%, -50%); z-index: 1; transition: left .18s linear, top .18s linear;
 }
-@keyframes bvGas {
-  0% { transform: translate(0, 0); }
-  50% { transform: translate(55px, -30px); }
-  100% { transform: translate(0, 0); }
+.bv-worker.mineral { background: var(--mineral); }
+.bv-worker.gas { background: var(--gas); }
+.bv-worker.waiting { opacity: .4; }
+.bv-worker.gathering { animation: bvPulse .6s ease-in-out infinite alternate; }
+.bv-worker.carrying { box-shadow: 0 0 0 2px var(--gold); }
+@keyframes bvPulse { from { transform: translate(-50%, -50%) scale(1); } to { transform: translate(-50%, -50%) scale(1.6); } }
+.bv-badge {
+  position: absolute; bottom: 4px; left: 4px; font-size: 9px; padding: 2px 6px; border-radius: 3px;
+  background: rgba(0,0,0,.55); color: var(--gold);
 }
+.bv-badge-scout { left: auto; right: 4px; color: #9d7fe0; }
 
 .icon { display: flex; align-items: center; justify-content: center; font-size: 9px; position: relative; flex-shrink: 0; text-align: center; line-height: 1.1; }
 .icon span { pointer-events: none; padding: 0 2px; }
@@ -212,10 +213,46 @@ h3 { margin-top: 14px; font-size: 12px; }
 .icon.size-normal { width: 34px; height: 34px; }
 .icon.size-addon { width: 20px; height: 20px; font-size: 7px; }
 .icon.size-unit { width: 22px; height: 22px; font-size: 7px; flex-shrink: 0; }
-.icon .bv-count { position: absolute; bottom: -5px; right: -5px; background: var(--gold); color: #201400; border-radius: 8px; font-size: 9px; padding: 0 4px; font-weight: 700; }
-.icon .bv-pct { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); border-radius: inherit; font-size: 10px; font-weight: 700; }
+.icon.clickable { cursor: pointer; }
+.icon.clickable:hover { filter: brightness(1.15); }
+.icon.selected { outline: 2px solid var(--gold); outline-offset: 2px; }
+.icon .bv-count, .icon .bv-count2 { position: absolute; bottom: -5px; right: -5px; background: var(--gold); color: #201400; border-radius: 8px; font-size: 9px; padding: 0 4px; font-weight: 700; }
+.icon .bv-count2 { right: auto; left: -5px; background: var(--dim); color: #04150a; }
+.icon .bv-pct { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.6); border-radius: inherit; font-size: 9px; font-weight: 700; }
+.icon .bv-cancel {
+  position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; min-height: 0; padding: 0;
+  border-radius: 50%; background: var(--danger); border-color: var(--danger); color: #fff; font-size: 11px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
 
 .bv-gallery { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+/* ---------- 시작 화면 ---------- */
+.start-screen {
+  min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 14px; padding: 24px 16px; text-align: center;
+}
+.start-screen h1 { color: var(--gold); font-size: 22px; margin: 0; letter-spacing: .04em; }
+.start-sub { color: var(--dim); font-size: 13px; margin: 0 0 6px; }
+.start-step { width: 100%; max-width: 480px; }
+.start-step h2 { text-align: left; }
+.start-race-grid { display: flex; gap: 14px; justify-content: center; }
+.start-race-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px; flex: 1;
+}
+.start-race-btn.active { border-color: var(--gold); background: #1c2440; }
+.start-bo-list { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; text-align: left; margin-bottom: 14px; }
+.start-bo-item {
+  display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px; background: var(--panel-2); cursor: pointer; font-size: 13px;
+}
+.start-bo-item:has(input:checked) { border-color: var(--gold); background: #1c2440; }
+.start-bo-item input { margin-right: 6px; }
+.start-bo-desc { color: var(--dim); font-size: 11px; margin-left: 18px; }
+.start-go-btn { width: 100%; padding: 12px; font-size: 15px; background: var(--gold); color: #201400; border-color: var(--gold); font-weight: 700; }
+
+.cmd-row.scoutrow { display: flex; gap: 8px; margin-bottom: 10px; }
+.scoutrow button { font-size: 12px; flex: 1; }
 
 /* ---------- Tablet ---------- */
 @media (min-width: 700px) {
@@ -256,9 +293,10 @@ h3 { margin-top: 14px; font-size: 12px; }
   }
   .panel-cmd { border-right: none; }
   .bo-list { max-height: none; flex: 1; }
-  .info-grid { max-height: 45%; }
   .log-list { max-height: none; flex: 1; }
   .cmd-grid { grid-template-columns: repeat(4, 1fr); align-content: start; }
   .panel-cmd { background: radial-gradient(circle at 30% 0%, #182142, var(--panel)); }
   .resources { justify-content: flex-start; }
+  .baseview-wrap { position: static; }
+  .bv-scene { height: 130px; }
 }

@@ -3,6 +3,7 @@
 let S = null; // 현재 게임 상태
 let boSteps = []; // 선택된 빌드오더의 진행 상태
 let tickTimer = null;
+const PROTOSS_WARP_INTERRUPT = 1.5; // 프로토스 일꾼: 건물 워프 시작 후 복귀까지 걸리는 짧은 시간(초)
 
 function fmtTime(sec) {
   sec = Math.max(0, Math.floor(sec));
@@ -19,6 +20,48 @@ function toast(msg) {
   toast._t = setTimeout(() => el.classList.remove('show'), 1600);
 }
 
+// ---------- 일꾼 개체 ----------
+function makeWorker() {
+  return {
+    id: S.nextWorkerId++,
+    job: 'mineral', // 'mineral' | 'gas' | 'building' | 'scout'
+    patchIndex: 0,
+    state: 'toResource', // toResource | waiting | gathering | toBase | building | scouting
+    stateStartAt: S.time,
+    stateEndAt: S.time,
+    buildTypeId: null,
+    buildInstId: null,
+  };
+}
+function workersByJob(job) { return S.workers.filter(w => w.job === job); }
+function totalPatches() { return PATCHES_PER_BASE * completedCount(S.race.mainBuildingId); }
+function patchLoad(i) { return S.workers.filter(w => w.job === 'mineral' && w.patchIndex === i).length; }
+function assignToPatch(w) {
+  const n = totalPatches();
+  let best = 0, bestLoad = Infinity;
+  for (let i = 0; i < n; i++) { const l = patchLoad(i); if (l < bestLoad) { bestLoad = l; best = i; } }
+  w.job = 'mineral';
+  w.patchIndex = best;
+  w.buildTypeId = null; w.buildInstId = null;
+  w.state = 'toResource';
+  w.stateStartAt = S.time;
+  w.stateEndAt = S.time + travelOneWaySec(S.raceId);
+}
+function gasCapacity() { return gasBuildingCount() * GAS_CAP_PER_BUILDING; }
+function assignToGas(w) {
+  w.job = 'gas';
+  w.patchIndex = null;
+  w.buildTypeId = null; w.buildInstId = null;
+  w.state = 'toResource';
+  w.stateStartAt = S.time;
+  w.stateEndAt = S.time + gasTravelOneWaySec();
+}
+function pickAvailableWorker() {
+  return S.workers.find(w => w.job === 'mineral') || S.workers.find(w => w.job === 'gas') || null;
+}
+// 저그의 레어/하이브 변태(consumesWorker:false)만 예외 - 드론이 아니라 기존 건물 자체가 변태하므로 일꾼이 전혀 필요 없음
+function buildingNeedsWorker(b) { return !(S && S.raceId === 'zerg' && b.consumesWorker === false); }
+
 // ---------- 상태 생성 ----------
 function initState(raceId) {
   const race = RACES[raceId];
@@ -27,21 +70,26 @@ function initState(raceId) {
     time: 0,
     minerals: race.startMinerals,
     gas: race.startGas,
-    gasWorkers: 0,
     supplyUsed: race.startSupplyUsed,
     supplyCap: race.startSupplyCap,
     buildingsByType: {},
-    unitCounts: { [race.workerUnit]: race.startWorkers },
+    unitCounts: {},
     zergLarva: raceId === 'zerg' ? { count: 3, timer: 0 } : null,
     zergActiveMorphs: [],
-    mineralCarriers: [],
-    gasCarriers: [],
+    workers: [],
+    nextWorkerId: 1,
     selectedBuildingType: race.mainBuildingId,
     log: [],
     speed: 1,
     nextInstId: 1,
   };
   s.buildingsByType[race.mainBuildingId] = [{ id: s.nextInstId++, status: 'ready', startAt: 0, doneAt: 0, queue: [], active: null }];
+  S = s; // assignToPatch 등 헬퍼가 전역 S를 참조하므로 미리 연결
+  for (let i = 0; i < race.startWorkers; i++) {
+    const w = makeWorker();
+    assignToPatch(w);
+    s.workers.push(w);
+  }
   return s;
 }
 
@@ -51,11 +99,12 @@ function readyInstances(typeId) { return instancesOf(typeId).filter(i => i.statu
 function constructingInstances(typeId) { return instancesOf(typeId).filter(i => i.status === 'constructing'); }
 function completedCount(typeId) { return readyInstances(typeId).length; }
 function prereqMet(list) { return (list || []).every(id => completedCount(id) > 0); }
-function totalWorkers() { return S.unitCounts[S.race.workerUnit] || 0; }
-function mineralWorkers() { return Math.max(0, totalWorkers() - S.gasWorkers); }
+function totalWorkers() { return S.workers.length; }
+function mineralWorkerCount() { return workersByJob('mineral').length; }
+function gasWorkerCount() { return workersByJob('gas').length; }
 function gasBuildingCount() { return completedCount(S.race.gasBuildingId); }
-function effectiveGasWorkers() { return Math.min(S.gasWorkers, gasBuildingCount() * GAS_CAP_PER_BUILDING); }
-function patches() { return PATCHES_PER_BASE * completedCount(S.race.mainBuildingId); }
+function effectiveGasWorkers() { return Math.min(gasWorkerCount(), gasCapacity()); }
+function patches() { return totalPatches(); }
 
 function logAction(text) {
   S.log.push({ t: S.time, text });
@@ -69,15 +118,27 @@ function doBuild(typeId) {
   if (!b) return;
   if (!prereqMet(b.prereq)) { toast('선행 건물이 필요합니다'); return; }
   if (S.minerals < b.mineral || S.gas < b.gas) { toast('자원이 부족합니다'); return; }
-  if (b.consumesWorker && totalWorkers() <= 0) { toast('일꾼이 없습니다'); return; }
+  const needsWorker = buildingNeedsWorker(b);
+  const builder = needsWorker ? pickAvailableWorker() : null;
+  if (needsWorker && !builder) { toast('일꾼이 없습니다'); return; }
+
   S.minerals -= b.mineral;
   S.gas -= b.gas;
-  if (b.consumesWorker) {
-    S.unitCounts[S.race.workerUnit] -= 1;
-    if (S.gasWorkers > totalWorkers()) S.gasWorkers = totalWorkers();
-  }
   if (!S.buildingsByType[typeId]) S.buildingsByType[typeId] = [];
-  S.buildingsByType[typeId].push({ id: S.nextInstId++, status: 'constructing', startAt: S.time, doneAt: S.time + b.time, queue: [], active: null });
+  const inst = { id: S.nextInstId++, status: 'constructing', startAt: S.time, doneAt: S.time + b.time, queue: [], active: null };
+  S.buildingsByType[typeId].push(inst);
+
+  if (S.raceId === 'zerg' && b.consumesWorker) {
+    S.workers.splice(S.workers.indexOf(builder), 1); // 드론이 건물로 변태 - 완전히 소모
+  } else if (needsWorker) {
+    builder.job = 'building';
+    builder.buildTypeId = typeId;
+    builder.buildInstId = inst.id;
+    builder.state = 'building';
+    builder.stateStartAt = S.time;
+    builder.stateEndAt = S.raceId === 'protoss' ? S.time + PROTOSS_WARP_INTERRUPT : inst.doneAt;
+  } // 레어/하이브 변태: 일꾼 관여 없음, 건물 자체 타이머로만 진행
+
   logAction(`${b.name} ${b.isAddon ? '건설(애드온)' : '착공'} — ${fmtTime(S.time)}`);
   checkBuildOrderStep({ kind: 'build', id: typeId });
   renderAll();
@@ -90,7 +151,14 @@ function cancelBuild(typeId, instId) {
   const b = S.race.buildings[typeId];
   S.minerals += b.mineral;
   S.gas += b.gas;
-  if (b.consumesWorker) S.unitCounts[S.race.workerUnit] = (S.unitCounts[S.race.workerUnit] || 0) + 1;
+  if (S.raceId === 'zerg' && b.consumesWorker) {
+    const w = makeWorker();
+    assignToPatch(w);
+    S.workers.push(w);
+  } else {
+    const builder = S.workers.find(w => w.job === 'building' && w.buildInstId === instId);
+    if (builder) assignToPatch(builder);
+  }
   list.splice(idx, 1);
   logAction(`${b.name} 건설 취소 (자원 환불) — ${fmtTime(S.time)}`);
   renderAll();
@@ -126,33 +194,111 @@ function doTrain(unitId) {
   renderAll();
 }
 
-function setGasWorkers(n) {
-  S.gasWorkers = Math.max(0, Math.min(n, totalWorkers()));
+function setGasWorkerCount(n) {
+  const gasList = workersByJob('gas');
+  const mineralList = workersByJob('mineral');
+  const available = gasList.length + mineralList.length;
+  n = Math.max(0, Math.min(n, available));
+  if (n > gasList.length) {
+    let need = n - gasList.length;
+    for (const w of mineralList) {
+      if (need <= 0) break;
+      assignToGas(w);
+      need--;
+    }
+  } else if (n < gasList.length) {
+    let excess = gasList.length - n;
+    for (const w of gasList) {
+      if (excess <= 0) break;
+      assignToPatch(w);
+      excess--;
+    }
+  }
+  renderAll();
+}
+
+function sendScout() {
+  const w = pickAvailableWorker();
+  if (!w) { toast('보낼 수 있는 일꾼이 없습니다'); return; }
+  w.job = 'scout';
+  w.patchIndex = null;
+  w.state = 'scouting';
+  logAction(`일꾼 1기 정찰 파견 — ${fmtTime(S.time)}`);
+  renderAll();
+}
+function recallScout() {
+  const w = S.workers.slice().reverse().find(w => w.job === 'scout');
+  if (!w) return;
+  assignToPatch(w);
+  logAction(`정찰 일꾼 복귀 — ${fmtTime(S.time)}`);
   renderAll();
 }
 
 function selectBuildingType(typeId) {
   S.selectedBuildingType = typeId;
   renderProductionPanel();
-  renderBuildingStatus();
+  renderBaseView();
 }
 
-// ---------- 채집: 일꾼 개체별 타이머로 8단위(1회 왕복분) 자원 전달 ----------
-function resizeCarriers(list, targetCount) {
-  while (list.length < targetCount) list.push({ nextAt: S.time + 0.4 + Math.random() * 1.6 });
-  while (list.length > targetCount) list.pop();
+// ---------- 일꾼 틱 (미네랄/가스 왕복 상태기계) ----------
+function startGathering(w, actionSec) {
+  w.state = 'gathering';
+  w.stateStartAt = S.time;
+  w.stateEndAt = S.time + actionSec;
 }
 
-function runCarriers(list, cycleTime, resourceKey) {
-  if (cycleTime <= 0 || !isFinite(cycleTime)) return;
-  list.forEach(c => {
-    let guard = 0;
-    while (S.time >= c.nextAt && guard < 50) {
-      S[resourceKey] += MINERALS_PER_TRIP;
-      c.nextAt += cycleTime;
-      guard++;
+function tickMineralWorker(w) {
+  if (w.state === 'toResource') {
+    if (S.time >= w.stateEndAt) {
+      const load = patchLoad(w.patchIndex);
+      const waitSec = patchWaitSec(S.raceId, load);
+      if (waitSec <= 0) startGathering(w, mineActionSec());
+      else { w.state = 'waiting'; w.stateStartAt = S.time; w.stateEndAt = S.time + waitSec; }
     }
-  });
+  } else if (w.state === 'waiting') {
+    if (S.time >= w.stateEndAt) startGathering(w, mineActionSec());
+  } else if (w.state === 'gathering') {
+    if (S.time >= w.stateEndAt) {
+      w.state = 'toBase'; w.stateStartAt = S.time; w.stateEndAt = S.time + travelOneWaySec(S.raceId);
+    }
+  } else if (w.state === 'toBase') {
+    if (S.time >= w.stateEndAt) {
+      S.minerals += MINERALS_PER_TRIP;
+      w.state = 'toResource'; w.stateStartAt = S.time; w.stateEndAt = S.time + travelOneWaySec(S.raceId);
+    }
+  }
+}
+
+function tickGasWorker(w) {
+  const rank = workersByJob('gas').indexOf(w);
+  const active = rank >= 0 && rank < gasCapacity();
+  if (w.state === 'toResource') {
+    if (S.time >= w.stateEndAt) {
+      if (active) startGathering(w, gasActionSec());
+      else { w.state = 'waiting'; w.stateStartAt = S.time; }
+    }
+  } else if (w.state === 'waiting') {
+    if (active) startGathering(w, gasActionSec());
+  } else if (w.state === 'gathering') {
+    if (S.time >= w.stateEndAt) {
+      w.state = 'toBase'; w.stateStartAt = S.time; w.stateEndAt = S.time + gasTravelOneWaySec();
+    }
+  } else if (w.state === 'toBase') {
+    if (S.time >= w.stateEndAt) {
+      S.gas += MINERALS_PER_TRIP;
+      w.state = 'toResource'; w.stateStartAt = S.time; w.stateEndAt = S.time + gasTravelOneWaySec();
+    }
+  }
+}
+
+function tickWorker(w) {
+  if (w.job === 'building') {
+    if (S.raceId === 'protoss' && S.time >= w.stateEndAt) assignToPatch(w);
+    return; // 테란은 건물 완공 시점에 별도로 복귀 처리, 저그는 이미 제거됨
+  }
+  if (w.job === 'mineral') tickMineralWorker(w);
+  else if (w.job === 'gas') tickGasWorker(w);
+  // scout: 이동 없음 (정찰 중, 복귀 버튼으로만 귀환)
 }
 
 // ---------- 틱 ----------
@@ -160,15 +306,7 @@ function tick(dt) {
   if (dt <= 0) return;
   S.time += dt;
 
-  const mw = mineralWorkers();
-  resizeCarriers(S.mineralCarriers, mw);
-  const mRatePerWorker = mw > 0 ? mineralRatePerSec(S.raceId, mw, patches()) / mw : 0;
-  runCarriers(S.mineralCarriers, mRatePerWorker > 0 ? MINERALS_PER_TRIP / mRatePerWorker : 0, 'minerals');
-
-  const gw = effectiveGasWorkers();
-  resizeCarriers(S.gasCarriers, gw);
-  const gRatePerWorker = GAS_PER_MIN_PER_WORKER / 60;
-  runCarriers(S.gasCarriers, MINERALS_PER_TRIP / gRatePerWorker, 'gas');
+  S.workers.forEach(tickWorker);
 
   // 건물 완공 + 생산 가능 건물의 유닛 큐 처리
   Object.entries(S.buildingsByType).forEach(([typeId, list]) => {
@@ -177,6 +315,10 @@ function tick(dt) {
       if (inst.status === 'constructing' && inst.doneAt <= S.time) {
         inst.status = 'ready';
         S.supplyCap += b.supply || 0;
+        if (S.raceId === 'terran') {
+          const builder = S.workers.find(w => w.job === 'building' && w.buildInstId === inst.id);
+          if (builder) assignToPatch(builder);
+        }
       }
       if (inst.status === 'ready' && b.produces) {
         if (inst.active && inst.active.doneAt <= S.time) {
@@ -210,7 +352,13 @@ function tick(dt) {
 
 function onUnitComplete(unitId) {
   const u = S.race.units[unitId];
-  S.unitCounts[unitId] = (S.unitCounts[unitId] || 0) + (u.count || 1);
+  if (unitId === S.race.workerUnit) {
+    const w = makeWorker();
+    assignToPatch(w);
+    S.workers.push(w);
+  } else {
+    S.unitCounts[unitId] = (S.unitCounts[unitId] || 0) + (u.count || 1);
+  }
   if (u.supplyProvide) S.supplyCap += u.supplyProvide;
 }
 
@@ -234,8 +382,8 @@ function checkBuildOrderStep(action) {
 
 // ---------- 렌더링 ----------
 function renderTop() {
-  const mRate = mineralRatePerSec(S.raceId, mineralWorkers(), patches());
-  const gRate = gasBuildingCount() > 0 ? gasRatePerSec(effectiveGasWorkers()) : 0;
+  const mRate = mineralRatePerSec(S.raceId, mineralWorkerCount(), patches());
+  const gRate = gasRatePerSec(effectiveGasWorkers());
   document.getElementById('rMinerals').textContent = Math.floor(S.minerals);
   document.getElementById('rMineralRate').textContent = `+${mRate.toFixed(1)}/초`;
   document.getElementById('rGas').textContent = Math.floor(S.gas);
@@ -246,12 +394,20 @@ function renderTop() {
   document.getElementById('rWorkers').textContent = totalWorkers();
   document.getElementById('rTime').textContent = fmtTime(S.time);
 
-  document.getElementById('gasCount').textContent = S.gasWorkers;
+  const gw = gasWorkerCount();
+  document.getElementById('gasCount').textContent = gw;
   const eff = effectiveGasWorkers();
-  const waste = S.gasWorkers - eff;
+  const waste = gw - eff;
   const gasInfoEl = document.getElementById('gasInfo');
-  gasInfoEl.textContent = waste > 0 ? `(포화 ${eff} / 유휴 대기 ${waste} — 가스 건물당 3기가 최적)` : `(포화 ${gasBuildingCount() * GAS_CAP_PER_BUILDING})`;
+  gasInfoEl.textContent = waste > 0 ? `(포화 ${eff} / 대기 ${waste} — 건물당 3기가 최적)` : `(포화 ${gasCapacity()})`;
   gasInfoEl.classList.toggle('warn', waste > 0);
+
+  const scoutCount = workersByJob('scout').length;
+  const scoutBtn = document.getElementById('scoutBtn');
+  const recallBtn = document.getElementById('recallScoutBtn');
+  scoutBtn.disabled = !pickAvailableWorker();
+  recallBtn.style.display = scoutCount > 0 ? '' : 'none';
+  recallBtn.textContent = `정찰 복귀 (${scoutCount})`;
 }
 
 function pctOf(startAt, doneAt) {
@@ -271,28 +427,49 @@ function buildingIconHtml(typeId, extra, posClass) {
   return `<div class="${posClass || ''} icon race-${S.raceId} ${iconSizeClass(typeId)}" title="${b.name}"><span>${shortLabel(b.name)}</span>${extra || ''}</div>`;
 }
 
+const BV_PATCH_POS = []; // 패치(0~7) 화면 위치(%) 캐시
+for (let i = 0; i < PATCHES_PER_BASE; i++) BV_PATCH_POS.push({ x: 12 + i * (76 / (PATCHES_PER_BASE - 1)), y: 14 });
+const BV_BASE_POS = { x: 50, y: 62 };
+const BV_GAS_POS = { x: 88, y: 80 };
+
+function lerp(a, b, t) { return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }; }
+function clamp01(t) { return Math.max(0, Math.min(1, t)); }
+
+function workerScenePos(w) {
+  if (w.job === 'mineral') {
+    const target = BV_PATCH_POS[w.patchIndex % PATCHES_PER_BASE];
+    if (w.state === 'toResource') return lerp(BV_BASE_POS, target, clamp01((S.time - w.stateStartAt) / (w.stateEndAt - w.stateStartAt)));
+    if (w.state === 'toBase') return lerp(target, BV_BASE_POS, clamp01((S.time - w.stateStartAt) / (w.stateEndAt - w.stateStartAt)));
+    return target; // waiting / gathering
+  }
+  if (w.job === 'gas') {
+    if (w.state === 'toResource') return lerp(BV_BASE_POS, BV_GAS_POS, clamp01((S.time - w.stateStartAt) / (w.stateEndAt - w.stateStartAt)));
+    if (w.state === 'toBase') return lerp(BV_GAS_POS, BV_BASE_POS, clamp01((S.time - w.stateStartAt) / (w.stateEndAt - w.stateStartAt)));
+    return BV_GAS_POS;
+  }
+  return null;
+}
+
 function renderBaseView() {
   const scene = document.getElementById('bvScene');
   const gasBuilt = gasBuildingCount() > 0;
-  const mw = mineralWorkers();
-  const gw = effectiveGasWorkers();
-  const mRatePerWorker = mw > 0 ? mineralRatePerSec(S.raceId, mw, patches()) / mw : 0;
-  const mCycle = mRatePerWorker > 0 ? MINERALS_PER_TRIP / mRatePerWorker : 4;
-  const gCycle = MINERALS_PER_TRIP / (GAS_PER_MIN_PER_WORKER / 60);
 
   let html = buildingIconHtml(S.race.mainBuildingId, '', 'bv-base');
   html += `<div class="bv-patches">${'<div class="bv-patch"></div>'.repeat(PATCHES_PER_BASE)}</div>`;
   if (gasBuilt) html += `<div class="bv-gas">가스</div>`;
 
-  for (let i = 0; i < mw; i++) {
-    const dx = -30 + (i % PATCHES_PER_BASE) * 8;
-    const delay = -((i / mw) * mCycle).toFixed(2);
-    html += `<div class="bv-worker mineral" style="--dx:${dx}px; animation-duration:${mCycle.toFixed(2)}s; animation-delay:${delay}s"></div>`;
-  }
-  for (let i = 0; i < gw; i++) {
-    const delay = -((i / gw) * gCycle).toFixed(2);
-    html += `<div class="bv-worker gas" style="animation-duration:${gCycle.toFixed(2)}s; animation-delay:${delay}s"></div>`;
-  }
+  S.workers.forEach(w => {
+    const pos = workerScenePos(w);
+    if (!pos) return;
+    const cls = ['bv-worker', w.job, w.state === 'gathering' ? 'gathering' : '', w.state === 'waiting' ? 'waiting' : '', w.state === 'toBase' ? 'carrying' : ''].join(' ');
+    html += `<div class="${cls}" style="left:${pos.x}%; top:${pos.y}%"></div>`;
+  });
+
+  const buildingCount = workersByJob('building').length;
+  const scoutCount = workersByJob('scout').length;
+  if (buildingCount) html += `<div class="bv-badge bv-badge-build">건설 중 ${buildingCount}</div>`;
+  if (scoutCount) html += `<div class="bv-badge bv-badge-scout">정찰 중 ${scoutCount}</div>`;
+
   scene.innerHTML = html;
 
   const gallery = document.getElementById('bvGallery');
@@ -300,41 +477,28 @@ function renderBaseView() {
   gallery.innerHTML = others.map(([id, b]) => {
     const ready = completedCount(id);
     const constructing = constructingInstances(id);
+    const selected = S.selectedBuildingType === id;
+    const clickable = !!b.produces && ready > 0;
     let extra = '';
     if (ready > 1) extra += `<b class="bv-count">${ready}</b>`;
-    if (constructing.length) extra += `<div class="bv-pct">${pctOf(constructing[0].startAt, constructing[0].doneAt)}%</div>`;
-    return buildingIconHtml(id, extra);
+    if (constructing.length) {
+      const inst = constructing[0];
+      const remain = Math.max(0, Math.ceil(inst.doneAt - S.time));
+      extra += `<div class="bv-pct">${remain}초</div><button class="bv-cancel" data-cancel-type="${id}" data-cancel-id="${inst.id}" title="건설 취소">×</button>`;
+      if (constructing.length > 1) extra += `<b class="bv-count2">+${constructing.length - 1}</b>`;
+    }
+    return `<div class="${clickable ? 'clickable' : ''} ${selected ? 'selected' : ''} icon race-${S.raceId} ${iconSizeClass(id)}" ${clickable ? `data-select="${id}"` : ''} title="${b.name}"><span>${shortLabel(b.name)}</span>${extra}</div>`;
   }).join('') || '<p class="hint">건설된 건물이 없습니다</p>';
-}
-
-function renderBuildingStatus() {
-  const el = document.getElementById('buildingStatus');
-  const entries = Object.entries(S.race.buildings).filter(([id]) => instancesOf(id).length > 0);
-  el.innerHTML = entries.map(([id, b]) => {
-    const ready = completedCount(id);
-    const constructing = constructingInstances(id);
-    const rows = constructing.map(inst => `
-      <div class="bld-progress-row">
-        <div class="pbar mini"><div class="pbar-fill" style="width:${pctOf(inst.startAt, inst.doneAt)}%"></div></div>
-        <span class="bld-remain">${Math.max(0, Math.ceil(inst.doneAt - S.time))}초 남음</span>
-        <button class="cancelbtn" data-cancel-type="${id}" data-cancel-id="${inst.id}">취소</button>
-      </div>`).join('');
-    const clickable = !!b.produces && ready > 0;
-    const selected = S.selectedBuildingType === id;
-    return `<div class="bld-card ${clickable ? 'clickable' : ''} ${selected ? 'selected' : ''}" ${clickable ? `data-select="${id}"` : ''}>
-      <div class="bld-head"><span>${b.name}</span><span class="bldcount">${ready}${constructing.length ? ` (건설중 x${constructing.length})` : ''}</span></div>
-      ${rows}
-    </div>`;
-  }).join('') || '<p class="hint">아직 건설된 건물이 없습니다</p>';
 }
 
 function renderUnitStatus() {
   const el = document.getElementById('unitStatus');
-  const entries = Object.entries(S.unitCounts).filter(([, c]) => c > 0);
-  el.innerHTML = entries.map(([id, c]) => {
+  const rows = [`<div class="unit-tile"><div class="icon race-${S.raceId} size-unit"><span>${shortLabel(S.race.workerName)}</span></div><span class="uname">${S.race.workerName}</span><span class="ucount">${totalWorkers()}</span></div>`];
+  Object.entries(S.unitCounts).filter(([, c]) => c > 0).forEach(([id, c]) => {
     const u = S.race.units[id];
-    return `<div class="unit-tile"><div class="icon race-${S.raceId} size-unit"><span>${shortLabel(u.name)}</span></div><span class="uname">${u.name}</span><span class="ucount">${c}</span></div>`;
-  }).join('') || '<p class="hint">-</p>';
+    rows.push(`<div class="unit-tile"><div class="icon race-${S.raceId} size-unit"><span>${shortLabel(u.name)}</span></div><span class="uname">${u.name}</span><span class="ucount">${c}</span></div>`);
+  });
+  el.innerHTML = rows.join('');
 }
 
 function renderLog() {
@@ -374,7 +538,7 @@ function affordable(mineral, gas) { return S.minerals >= mineral && S.gas >= gas
 function renderBuildGrid() {
   const buildEl = document.getElementById('buildGrid');
   buildEl.innerHTML = Object.entries(S.race.buildings).map(([id, b]) => {
-    const ok = prereqMet(b.prereq) && affordable(b.mineral, b.gas);
+    const ok = prereqMet(b.prereq) && affordable(b.mineral, b.gas) && (!buildingNeedsWorker(b) || !!pickAvailableWorker());
     return `<button class="cmdbtn ${b.isAddon ? 'addon' : ''}" data-build="${id}" ${ok ? '' : 'disabled'}>
       <span>${b.name}</span>
       <span class="cost">${b.mineral}${b.gas ? '/' + b.gas : ''}${b.supply ? ' Su+' + b.supply : ''}</span>
@@ -432,13 +596,12 @@ function renderProductionPanel() {
 function renderAll() {
   renderTop();
   renderBaseView();
-  renderBuildingStatus();
   renderUnitStatus();
   renderBuildGrid();
   renderProductionPanel();
 }
 
-// ---------- 셀렉트 박스 ----------
+// ---------- 셀렉트 박스 / 시작화면 ----------
 function populateRaceSelect() {
   const sel = document.getElementById('raceSelect');
   sel.innerHTML = Object.values(RACES).map(r => `<option value="${r.id}">${r.name}</option>`).join('');
@@ -448,14 +611,62 @@ function populateBoSelect() {
   sel.innerHTML = BUILD_ORDERS[S.raceId].map(b => `<option value="${b.id}">[${b.level}] ${b.name}</option>`).join('');
 }
 
-function resetGame(raceId) {
+function resetGame(raceId, boId) {
   S = initState(raceId);
   populateBoSelect();
+  if (boId) document.getElementById('boSelect').value = boId;
   const bo = currentBuildOrder();
   boSteps = bo ? bo.steps.map(() => ({ done: false })) : [];
   renderAll();
   renderBuildOrder();
   renderLog();
+}
+
+// ---------- 시작화면 ----------
+let startSelectedRace = null;
+function renderStartRaceGrid() {
+  const el = document.getElementById('startRaceGrid');
+  el.innerHTML = Object.values(RACES).map(r => `
+    <button class="start-race-btn ${startSelectedRace === r.id ? 'active' : ''}" data-race="${r.id}">
+      <div class="icon race-${r.id} size-main"><span>${r.name.slice(0, 2)}</span></div>
+      <span>${r.name}</span>
+    </button>`).join('');
+}
+function renderStartBoList() {
+  const el = document.getElementById('startBoList');
+  if (!startSelectedRace) { el.innerHTML = ''; return; }
+  el.innerHTML = BUILD_ORDERS[startSelectedRace].map(bo => `
+    <label class="start-bo-item">
+      <input type="radio" name="startBo" value="${bo.id}">
+      <span class="start-bo-name">[${bo.level}] ${bo.name}</span>
+      <span class="start-bo-desc">${bo.desc}</span>
+    </label>`).join('');
+}
+function wireStartScreen() {
+  document.getElementById('startRaceGrid').addEventListener('click', e => {
+    const btn = e.target.closest('[data-race]');
+    if (!btn) return;
+    startSelectedRace = btn.dataset.race;
+    renderStartRaceGrid();
+    renderStartBoList();
+    document.getElementById('startBoStep').style.display = '';
+    document.getElementById('startGoBtn').disabled = true;
+  });
+  document.getElementById('startBoList').addEventListener('change', () => {
+    document.getElementById('startGoBtn').disabled = false;
+  });
+  document.getElementById('startGoBtn').addEventListener('click', () => {
+    const checked = document.querySelector('input[name="startBo"]:checked');
+    if (!startSelectedRace || !checked) return;
+    resetGame(startSelectedRace, checked.value);
+    document.getElementById('raceSelect').value = startSelectedRace;
+    document.getElementById('startScreen').style.display = 'none';
+    document.getElementById('app').style.display = '';
+  });
+  document.getElementById('menuBtn').addEventListener('click', () => {
+    document.getElementById('app').style.display = 'none';
+    document.getElementById('startScreen').style.display = '';
+  });
 }
 
 // ---------- 이벤트 ----------
@@ -478,8 +689,10 @@ function wireEvents() {
     document.querySelectorAll('.spdbtn').forEach(b => b.classList.toggle('active', b === btn));
   });
 
-  document.getElementById('gasMinus').addEventListener('click', () => setGasWorkers(S.gasWorkers - 1));
-  document.getElementById('gasPlus').addEventListener('click', () => setGasWorkers(S.gasWorkers + 1));
+  document.getElementById('gasMinus').addEventListener('click', () => setGasWorkerCount(gasWorkerCount() - 1));
+  document.getElementById('gasPlus').addEventListener('click', () => setGasWorkerCount(gasWorkerCount() + 1));
+  document.getElementById('scoutBtn').addEventListener('click', sendScout);
+  document.getElementById('recallScoutBtn').addEventListener('click', recallScout);
 
   document.getElementById('buildGrid').addEventListener('click', e => {
     const btn = e.target.closest('[data-build]');
@@ -493,12 +706,19 @@ function wireEvents() {
     const btn = e.target.closest('[data-select]');
     if (btn) selectBuildingType(btn.dataset.select);
   });
-  document.getElementById('buildingStatus').addEventListener('click', e => {
+  document.getElementById('bvGallery').addEventListener('click', e => {
     const cancelBtn = e.target.closest('[data-cancel-type]');
     if (cancelBtn) { cancelBuild(cancelBtn.dataset.cancelType, Number(cancelBtn.dataset.cancelId)); return; }
     const btn = e.target.closest('[data-select]');
     if (btn) selectBuildingType(btn.dataset.select);
   });
+
+  const wrap = document.getElementById('baseviewWrap');
+  window.addEventListener('scroll', () => wrap.classList.toggle('compact', window.scrollY > 16), { passive: true });
+
+  const setTopbarH = () => document.documentElement.style.setProperty('--topbar-h', document.querySelector('.topbar').offsetHeight + 'px');
+  setTopbarH();
+  window.addEventListener('resize', setTopbarH);
 }
 
 // ---------- 게임 루프 ----------
@@ -508,16 +728,22 @@ function startLoop() {
     const now = performance.now();
     const realDt = (now - last) / 1000;
     last = now;
-    tick(realDt * S.speed);
+    if (document.getElementById('app').style.display !== 'none') tick(realDt * S.speed);
   }, 200);
 }
 
 // ---------- 초기화 ----------
 function boot() {
   populateRaceSelect();
-  const savedRace = localStorage.getItem('sc-bo-race') || 'terran';
-  document.getElementById('raceSelect').value = savedRace;
-  resetGame(savedRace);
+  renderStartRaceGrid();
+  wireStartScreen();
+  const savedRace = localStorage.getItem('sc-bo-race');
+  if (savedRace && RACES[savedRace]) {
+    startSelectedRace = savedRace;
+    renderStartRaceGrid();
+    renderStartBoList();
+    document.getElementById('startBoStep').style.display = '';
+  }
   wireEvents();
   startLoop();
 

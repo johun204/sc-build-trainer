@@ -38,6 +38,46 @@ function gasRatePerSec(effectiveGasWorkers) {
   return effectiveGasWorkers * (GAS_PER_MIN_PER_WORKER / 60);
 }
 
+/*
+  개체별 일꾼 시뮬레이션용 실측 프레임 상수(Mining 문서 근거):
+  - 미네랄 채집 동작 자체는 80프레임, 가스는 37프레임 고정(모든 종족 공통).
+  - 왕복(이동) 시간은 종족별 전체 사이클 프레임에서 채집 동작 프레임을 뺀 나머지를 반씩 나눔.
+    (SCV 176.7 / 드론 171.2 / 프로브 168.7 프레임, 가스는 종족 공통 111프레임)
+  - "대기(waiting)" 시간은 포화 공식으로 계산한 실제 평균 사이클에서 이동+채집 고정 시간을
+    뺀 나머지로 산출 - 즉, 이동/채집 동작 자체는 항상 실측 그대로이고, 혼잡도에 따른 지연만
+    별도의 대기 상태로 표현됩니다.
+*/
+const FPS = 23.81;
+const MINE_ACTION_FRAMES = 80;
+const GAS_ACTION_FRAMES = 37;
+const WORKER_CYCLE_FRAMES = { terran: 176.7, zerg: 171.2, protoss: 168.7 };
+const GAS_CYCLE_FRAMES = 111;
+
+function mineActionSec() { return MINE_ACTION_FRAMES / FPS; }
+function gasActionSec() { return GAS_ACTION_FRAMES / FPS; }
+function travelOneWaySec(raceId) { return ((WORKER_CYCLE_FRAMES[raceId] - MINE_ACTION_FRAMES) / 2) / FPS; }
+function gasTravelOneWaySec() { return ((GAS_CYCLE_FRAMES - GAS_ACTION_FRAMES) / 2) / FPS; }
+
+// 패치 1개에 n명이 붙었을 때 그 패치의 "합산" 분당 채집량 (n>3인 분량은 기여 없음)
+function patchTotalRatePerMin(raceId, n) {
+  if (n <= 0) return 0;
+  const g = GATHER_TABLE[raceId];
+  if (n === 1) return g.soloPerMin;
+  const extra = Math.min(n, 3) - 1;
+  return g.soloPerMin + extra * g.marginalPerMin;
+}
+// 해당 패치에서 일꾼 1명이 왕복 1회(8단위)를 완료하는 데 걸리는 평균 시간
+function patchCycleSec(raceId, n) {
+  const rate = patchTotalRatePerMin(raceId, n);
+  if (rate <= 0) return Infinity;
+  return (MINERALS_PER_TRIP * n) / (rate / 60);
+}
+function patchWaitSec(raceId, n) {
+  const cycle = patchCycleSec(raceId, n);
+  if (!isFinite(cycle)) return Infinity;
+  return Math.max(0, cycle - 2 * travelOneWaySec(raceId) - mineActionSec());
+}
+
 const RACES = {
   terran: {
     id: 'terran', name: '테란', workerName: 'SCV', workerUnit: 'scv', mainBuildingId: 'command_center',
