@@ -34,6 +34,8 @@ function initState(raceId) {
     unitCounts: { [race.workerUnit]: race.startWorkers },
     zergLarva: raceId === 'zerg' ? { count: 3, timer: 0 } : null,
     zergActiveMorphs: [],
+    mineralCarriers: [],
+    gasCarriers: [],
     selectedBuildingType: race.mainBuildingId,
     log: [],
     speed: 1,
@@ -81,6 +83,19 @@ function doBuild(typeId) {
   renderAll();
 }
 
+function cancelBuild(typeId, instId) {
+  const list = S.buildingsByType[typeId] || [];
+  const idx = list.findIndex(i => i.id === instId && i.status === 'constructing');
+  if (idx === -1) return;
+  const b = S.race.buildings[typeId];
+  S.minerals += b.mineral;
+  S.gas += b.gas;
+  if (b.consumesWorker) S.unitCounts[S.race.workerUnit] = (S.unitCounts[S.race.workerUnit] || 0) + 1;
+  list.splice(idx, 1);
+  logAction(`${b.name} 건설 취소 (자원 환불) — ${fmtTime(S.time)}`);
+  renderAll();
+}
+
 function doTrain(unitId) {
   const u = S.race.units[unitId];
   if (!u) return;
@@ -122,13 +137,38 @@ function selectBuildingType(typeId) {
   renderBuildingStatus();
 }
 
+// ---------- 채집: 일꾼 개체별 타이머로 8단위(1회 왕복분) 자원 전달 ----------
+function resizeCarriers(list, targetCount) {
+  while (list.length < targetCount) list.push({ nextAt: S.time + 0.4 + Math.random() * 1.6 });
+  while (list.length > targetCount) list.pop();
+}
+
+function runCarriers(list, cycleTime, resourceKey) {
+  if (cycleTime <= 0 || !isFinite(cycleTime)) return;
+  list.forEach(c => {
+    let guard = 0;
+    while (S.time >= c.nextAt && guard < 50) {
+      S[resourceKey] += MINERALS_PER_TRIP;
+      c.nextAt += cycleTime;
+      guard++;
+    }
+  });
+}
+
 // ---------- 틱 ----------
 function tick(dt) {
   if (dt <= 0) return;
   S.time += dt;
 
-  S.minerals += mineralRatePerSec(S.raceId, mineralWorkers(), patches()) * dt;
-  if (gasBuildingCount() > 0) S.gas += gasRatePerSec(effectiveGasWorkers()) * dt;
+  const mw = mineralWorkers();
+  resizeCarriers(S.mineralCarriers, mw);
+  const mRatePerWorker = mw > 0 ? mineralRatePerSec(S.raceId, mw, patches()) / mw : 0;
+  runCarriers(S.mineralCarriers, mRatePerWorker > 0 ? MINERALS_PER_TRIP / mRatePerWorker : 0, 'minerals');
+
+  const gw = effectiveGasWorkers();
+  resizeCarriers(S.gasCarriers, gw);
+  const gRatePerWorker = GAS_PER_MIN_PER_WORKER / 60;
+  runCarriers(S.gasCarriers, MINERALS_PER_TRIP / gRatePerWorker, 'gas');
 
   // 건물 완공 + 생산 가능 건물의 유닛 큐 처리
   Object.entries(S.buildingsByType).forEach(([typeId, list]) => {
@@ -219,18 +259,71 @@ function pctOf(startAt, doneAt) {
   return Math.max(0, Math.min(100, Math.round((S.time - startAt) / (doneAt - startAt) * 100)));
 }
 
+// ---------- 그래픽 리소스 (건물/유닛 아이콘 + 베이스 뷰) ----------
+function shortLabel(name) { return name.replace(/\s*\(.*\)/, '').slice(0, 2); }
+function iconSizeClass(typeId) {
+  if (typeId === S.race.mainBuildingId) return 'size-main';
+  if (S.race.buildings[typeId].isAddon) return 'size-addon';
+  return 'size-normal';
+}
+function buildingIconHtml(typeId, extra, posClass) {
+  const b = S.race.buildings[typeId];
+  return `<div class="${posClass || ''} icon race-${S.raceId} ${iconSizeClass(typeId)}" title="${b.name}"><span>${shortLabel(b.name)}</span>${extra || ''}</div>`;
+}
+
+function renderBaseView() {
+  const scene = document.getElementById('bvScene');
+  const gasBuilt = gasBuildingCount() > 0;
+  const mw = mineralWorkers();
+  const gw = effectiveGasWorkers();
+  const mRatePerWorker = mw > 0 ? mineralRatePerSec(S.raceId, mw, patches()) / mw : 0;
+  const mCycle = mRatePerWorker > 0 ? MINERALS_PER_TRIP / mRatePerWorker : 4;
+  const gCycle = MINERALS_PER_TRIP / (GAS_PER_MIN_PER_WORKER / 60);
+
+  let html = buildingIconHtml(S.race.mainBuildingId, '', 'bv-base');
+  html += `<div class="bv-patches">${'<div class="bv-patch"></div>'.repeat(PATCHES_PER_BASE)}</div>`;
+  if (gasBuilt) html += `<div class="bv-gas">가스</div>`;
+
+  for (let i = 0; i < mw; i++) {
+    const dx = -30 + (i % PATCHES_PER_BASE) * 8;
+    const delay = -((i / mw) * mCycle).toFixed(2);
+    html += `<div class="bv-worker mineral" style="--dx:${dx}px; animation-duration:${mCycle.toFixed(2)}s; animation-delay:${delay}s"></div>`;
+  }
+  for (let i = 0; i < gw; i++) {
+    const delay = -((i / gw) * gCycle).toFixed(2);
+    html += `<div class="bv-worker gas" style="animation-duration:${gCycle.toFixed(2)}s; animation-delay:${delay}s"></div>`;
+  }
+  scene.innerHTML = html;
+
+  const gallery = document.getElementById('bvGallery');
+  const others = Object.entries(S.race.buildings).filter(([id]) => id !== S.race.mainBuildingId && instancesOf(id).length > 0);
+  gallery.innerHTML = others.map(([id, b]) => {
+    const ready = completedCount(id);
+    const constructing = constructingInstances(id);
+    let extra = '';
+    if (ready > 1) extra += `<b class="bv-count">${ready}</b>`;
+    if (constructing.length) extra += `<div class="bv-pct">${pctOf(constructing[0].startAt, constructing[0].doneAt)}%</div>`;
+    return buildingIconHtml(id, extra);
+  }).join('') || '<p class="hint">건설된 건물이 없습니다</p>';
+}
+
 function renderBuildingStatus() {
   const el = document.getElementById('buildingStatus');
   const entries = Object.entries(S.race.buildings).filter(([id]) => instancesOf(id).length > 0);
   el.innerHTML = entries.map(([id, b]) => {
     const ready = completedCount(id);
     const constructing = constructingInstances(id);
-    const bars = constructing.map(inst => `<div class="pbar mini"><div class="pbar-fill" style="width:${pctOf(inst.startAt, inst.doneAt)}%"></div></div>`).join('');
+    const rows = constructing.map(inst => `
+      <div class="bld-progress-row">
+        <div class="pbar mini"><div class="pbar-fill" style="width:${pctOf(inst.startAt, inst.doneAt)}%"></div></div>
+        <span class="bld-remain">${Math.max(0, Math.ceil(inst.doneAt - S.time))}초 남음</span>
+        <button class="cancelbtn" data-cancel-type="${id}" data-cancel-id="${inst.id}">취소</button>
+      </div>`).join('');
     const clickable = !!b.produces && ready > 0;
     const selected = S.selectedBuildingType === id;
     return `<div class="bld-card ${clickable ? 'clickable' : ''} ${selected ? 'selected' : ''}" ${clickable ? `data-select="${id}"` : ''}>
       <div class="bld-head"><span>${b.name}</span><span class="bldcount">${ready}${constructing.length ? ` (건설중 x${constructing.length})` : ''}</span></div>
-      ${bars}
+      ${rows}
     </div>`;
   }).join('') || '<p class="hint">아직 건설된 건물이 없습니다</p>';
 }
@@ -240,7 +333,7 @@ function renderUnitStatus() {
   const entries = Object.entries(S.unitCounts).filter(([, c]) => c > 0);
   el.innerHTML = entries.map(([id, c]) => {
     const u = S.race.units[id];
-    return `<div class="unit-tile"><span class="uname">${u.name}</span><span class="ucount">${c}</span></div>`;
+    return `<div class="unit-tile"><div class="icon race-${S.raceId} size-unit"><span>${shortLabel(u.name)}</span></div><span class="uname">${u.name}</span><span class="ucount">${c}</span></div>`;
   }).join('') || '<p class="hint">-</p>';
 }
 
@@ -338,6 +431,7 @@ function renderProductionPanel() {
 
 function renderAll() {
   renderTop();
+  renderBaseView();
   renderBuildingStatus();
   renderUnitStatus();
   renderBuildGrid();
@@ -400,6 +494,8 @@ function wireEvents() {
     if (btn) selectBuildingType(btn.dataset.select);
   });
   document.getElementById('buildingStatus').addEventListener('click', e => {
+    const cancelBtn = e.target.closest('[data-cancel-type]');
+    if (cancelBtn) { cancelBuild(cancelBtn.dataset.cancelType, Number(cancelBtn.dataset.cancelId)); return; }
     const btn = e.target.closest('[data-select]');
     if (btn) selectBuildingType(btn.dataset.select);
   });

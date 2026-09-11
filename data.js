@@ -19,6 +19,7 @@ const GATHER_TABLE = {
   protoss: { soloPerMin: 68.1, marginalPerMin: 68.1 * 0.6 },
 };
 const GAS_PER_MIN_PER_WORKER = 103;
+const MINERALS_PER_TRIP = 8; // 미네랄/가스 공통: 일꾼 1회 왕복당 8단위 전달
 const PATCHES_PER_BASE = 8;
 const GAS_CAP_PER_BUILDING = 3;
 const LARVA_SPAWN_INTERVAL = 15;
