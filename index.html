@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0e1a">
+<title>SC 빌드오더 연습기</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="topbar">
+    <div class="topbar-select">
+      <select id="raceSelect" aria-label="종족 선택"></select>
+      <select id="boSelect" aria-label="빌드오더 선택"></select>
+    </div>
+    <div class="resources" id="resources">
+      <span class="res res-mineral"><i class="dot dot-mineral"></i><b id="rMinerals">50</b></span>
+      <span class="res res-gas"><i class="dot dot-gas"></i><b id="rGas">0</b></span>
+      <span class="res res-supply"><i class="dot dot-supply"></i><b id="rSupply">4/10</b></span>
+      <span class="res res-workers"><i class="dot dot-worker"></i><b id="rWorkers">4</b></span>
+      <span class="res res-time"><i class="dot dot-time"></i><b id="rTime">0:00</b></span>
+    </div>
+    <div class="topbar-controls">
+      <div class="speedgroup" id="speedGroup">
+        <button data-speed="0" class="spdbtn">II</button>
+        <button data-speed="1" class="spdbtn active">1x</button>
+        <button data-speed="2" class="spdbtn">2x</button>
+        <button data-speed="4" class="spdbtn">4x</button>
+        <button data-speed="8" class="spdbtn">8x</button>
+      </div>
+      <button id="resetBtn" class="resetbtn">초기화</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <section class="panel panel-bo" aria-label="빌드오더 체크리스트">
+      <h2>빌드오더 체크리스트</h2>
+      <p class="bo-desc" id="boDesc"></p>
+      <ol class="bo-list" id="boList"></ol>
+    </section>
+
+    <section class="panel panel-info" aria-label="현황">
+      <h2>현황</h2>
+      <div class="info-grid" id="buildingStatus"></div>
+      <h3>최근 행동</h3>
+      <ul class="log-list" id="logList"></ul>
+    </section>
+
+    <section class="panel panel-cmd" aria-label="커맨드 카드">
+      <div class="cmd-row gasrow" id="gasRow">
+        <span>가스 일꾼</span>
+        <button id="gasMinus" class="stepbtn">-</button>
+        <b id="gasCount">0</b>
+        <button id="gasPlus" class="stepbtn">+</button>
+      </div>
+      <h3>건물</h3>
+      <div class="cmd-grid" id="buildGrid"></div>
+      <h3>유닛</h3>
+      <div class="cmd-grid" id="unitGrid"></div>
+    </section>
+  </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script src="data.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

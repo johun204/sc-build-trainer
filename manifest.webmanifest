@@ -1,0 +1,14 @@
+{
+  "name": "SC 빌드오더 연습기",
+  "short_name": "SC빌드연습",
+  "description": "스타크래프트 브루드워 빌드오더 타이밍 연습용 시뮬레이터",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#05070f",
+  "theme_color": "#0b0e1a",
+  "orientation": "any",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

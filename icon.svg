@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="28" fill="#0b0e1a"/>
+  <polygon points="96,18 168,58 168,134 96,174 24,134 24,58" fill="#131b30" stroke="#e0b854" stroke-width="6"/>
+  <rect x="70" y="70" width="52" height="52" fill="#4fc3f7"/>
+  <rect x="70" y="70" width="52" height="18" fill="#66d17a"/>
+  <text x="96" y="150" text-anchor="middle" font-family="Segoe UI, sans-serif" font-size="26" font-weight="700" fill="#e0b854">SC</text>
+</svg>
