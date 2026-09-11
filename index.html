@@ -61,7 +61,10 @@
   <main class="stage">
     <section class="panel panel-bo" aria-label="빌드오더 체크리스트">
       <h2>빌드오더 체크리스트</h2>
+      <p class="bo-note">※ 목록의 인구수는 유닛/건물을 생산 큐에 넣는 즉시(완성 전이라도) 반영되는 값입니다. 목록에 없는
+        구간에도 인구수가 남는 한 일꾼 생산은 계속 유지하세요.</p>
       <p class="bo-desc" id="boDesc"></p>
+      <p class="bo-tip" id="boTip"></p>
       <ol class="bo-list" id="boList"></ol>
     </section>
 
@@ -86,8 +89,7 @@
       </div>
       <h3>건물 건설</h3>
       <div class="cmd-grid" id="buildGrid"></div>
-      <h3>생산</h3>
-      <div class="tab-row" id="prodTabs"></div>
+      <h3>생산 <span class="hint-inline">(위 베이스 뷰에서 건물을 클릭)</span></h3>
       <div id="prodPanel"></div>
     </section>
   </main>

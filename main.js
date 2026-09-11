@@ -12,12 +12,12 @@ function fmtTime(sec) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-function toast(msg) {
+function toast(msg, ms) {
   const el = document.getElementById('toast');
   el.textContent = msg;
   el.classList.add('show');
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => el.classList.remove('show'), 1600);
+  toast._t = setTimeout(() => el.classList.remove('show'), ms || 1600);
 }
 
 // ---------- 일꾼 개체 ----------
@@ -347,6 +347,7 @@ function tick(dt) {
     });
   }
 
+  checkNextStepAlert();
   renderAll();
 }
 
@@ -378,6 +379,25 @@ function checkBuildOrderStep(action) {
   const deltaTime = trig.time != null ? (S.time - trig.time) : null;
   boSteps[idx] = { done: true, actualTime: S.time, actualSupply: S.supplyUsed, deltaSupply, deltaTime };
   renderBuildOrder();
+}
+
+// 다음 단계의 트리거 조건이 이미 충족됐는데 아직 실행하지 않았다면 알림(1회만)
+function checkNextStepAlert() {
+  const bo = currentBuildOrder();
+  if (!bo) return;
+  const idx = boSteps.findIndex(s => !s.done);
+  if (idx === -1) return;
+  const st = boSteps[idx];
+  if (st.notified) return;
+  const t = bo.steps[idx].trigger;
+  const supplyOk = t.supply == null || S.supplyUsed >= t.supply;
+  const timeOk = t.time == null || S.time >= t.time;
+  const mineralsOk = t.minerals == null || S.minerals >= t.minerals;
+  if (!(supplyOk && timeOk && mineralsOk)) return;
+  st.notified = true;
+  const step = bo.steps[idx];
+  const actionName = (step.action.kind === 'train' ? S.race.units[step.action.id] : S.race.buildings[step.action.id])?.name || step.action.id;
+  toast(`▶ 다음 할 일: ${actionName}${step.note ? ' — ' + step.note : ''}`, 3000);
 }
 
 // ---------- 렌더링 ----------
@@ -424,7 +444,11 @@ function iconSizeClass(typeId) {
 }
 function buildingIconHtml(typeId, extra, posClass) {
   const b = S.race.buildings[typeId];
-  return `<div class="${posClass || ''} icon race-${S.raceId} ${iconSizeClass(typeId)}" title="${b.name}"><span>${shortLabel(b.name)}</span>${extra || ''}</div>`;
+  const clickable = !!b.produces && completedCount(typeId) > 0;
+  const selected = S.selectedBuildingType === typeId;
+  const cls = [posClass, 'icon', `race-${S.raceId}`, iconSizeClass(typeId), clickable ? 'clickable' : '', selected ? 'selected' : ''].filter(Boolean).join(' ');
+  const attr = clickable ? `data-select="${typeId}"` : '';
+  return `<div class="${cls}" ${attr} title="${b.name}"><span>${shortLabel(b.name)}</span>${extra || ''}</div>`;
 }
 
 const BV_PATCH_POS = []; // 패치(0~7) 화면 위치(%) 캐시
@@ -477,8 +501,6 @@ function renderBaseView() {
   gallery.innerHTML = others.map(([id, b]) => {
     const ready = completedCount(id);
     const constructing = constructingInstances(id);
-    const selected = S.selectedBuildingType === id;
-    const clickable = !!b.produces && ready > 0;
     let extra = '';
     if (ready > 1) extra += `<b class="bv-count">${ready}</b>`;
     if (constructing.length) {
@@ -487,7 +509,7 @@ function renderBaseView() {
       extra += `<div class="bv-pct">${remain}초</div><button class="bv-cancel" data-cancel-type="${id}" data-cancel-id="${inst.id}" title="건설 취소">×</button>`;
       if (constructing.length > 1) extra += `<b class="bv-count2">+${constructing.length - 1}</b>`;
     }
-    return `<div class="${clickable ? 'clickable' : ''} ${selected ? 'selected' : ''} icon race-${S.raceId} ${iconSizeClass(id)}" ${clickable ? `data-select="${id}"` : ''} title="${b.name}"><span>${shortLabel(b.name)}</span>${extra}</div>`;
+    return buildingIconHtml(id, extra);
   }).join('') || '<p class="hint">건설된 건물이 없습니다</p>';
 }
 
@@ -510,8 +532,10 @@ function renderBuildOrder() {
   const bo = currentBuildOrder();
   const listEl = document.getElementById('boList');
   const descEl = document.getElementById('boDesc');
-  if (!bo) { listEl.innerHTML = ''; descEl.textContent = ''; return; }
+  const tipEl = document.getElementById('boTip');
+  if (!bo) { listEl.innerHTML = ''; descEl.textContent = ''; tipEl.textContent = ''; return; }
   descEl.textContent = bo.desc;
+  tipEl.textContent = bo.tip ? `💡 ${bo.tip}` : '';
   const firstPendingIdx = boSteps.findIndex(s => !s.done);
   listEl.innerHTML = bo.steps.map((step, i) => {
     const st = boSteps[i];
@@ -556,11 +580,8 @@ function unitButtonHtml(id, u, requireLarva) {
 
 function renderProductionPanel() {
   const el = document.getElementById('prodPanel');
-  const tabsEl = document.getElementById('prodTabs');
 
   if (S.raceId === 'zerg') {
-    tabsEl.innerHTML = '';
-    tabsEl.style.display = 'none';
     const hatchCount = completedCount('hatchery');
     const units = Object.entries(S.race.units).map(([id, u]) => unitButtonHtml(id, u, true)).join('');
     const morphs = S.zergActiveMorphs.map(m => {
@@ -571,13 +592,9 @@ function renderProductionPanel() {
     return;
   }
 
-  tabsEl.style.display = '';
-  const producerTypes = Object.entries(S.race.buildings).filter(([id, b]) => b.produces && completedCount(id) > 0);
-  tabsEl.innerHTML = producerTypes.map(([id, b]) => `<button class="tabbtn ${S.selectedBuildingType === id ? 'active' : ''}" data-select="${id}">${b.name} (${completedCount(id)})</button>`).join('');
-
   const typeId = S.selectedBuildingType;
   if (!typeId || completedCount(typeId) <= 0) {
-    el.innerHTML = '<p class="hint">위에서 생산할 건물을 선택하세요</p>';
+    el.innerHTML = '<p class="hint">위 베이스 뷰에서 생산할 건물을 클릭하세요</p>';
     return;
   }
   const b = S.race.buildings[typeId];
@@ -702,18 +719,13 @@ function wireEvents() {
     const btn = e.target.closest('[data-train]');
     if (btn) doTrain(btn.dataset.train);
   });
-  document.getElementById('prodTabs').addEventListener('click', e => {
-    const btn = e.target.closest('[data-select]');
-    if (btn) selectBuildingType(btn.dataset.select);
-  });
-  document.getElementById('bvGallery').addEventListener('click', e => {
+  const wrap = document.getElementById('baseviewWrap');
+  wrap.addEventListener('click', e => {
     const cancelBtn = e.target.closest('[data-cancel-type]');
     if (cancelBtn) { cancelBuild(cancelBtn.dataset.cancelType, Number(cancelBtn.dataset.cancelId)); return; }
     const btn = e.target.closest('[data-select]');
     if (btn) selectBuildingType(btn.dataset.select);
   });
-
-  const wrap = document.getElementById('baseviewWrap');
   window.addEventListener('scroll', () => wrap.classList.toggle('compact', window.scrollY > 16), { passive: true });
 
   const setTopbarH = () => document.documentElement.style.setProperty('--topbar-h', document.querySelector('.topbar').offsetHeight + 'px');

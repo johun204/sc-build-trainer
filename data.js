@@ -194,6 +194,7 @@ const BUILD_ORDERS = {
     {
       id: 't_1rax_fe', name: '1배럭 더블 (1 Rax FE)', level: '입문',
       desc: '배럭스 하나로 벙커 압박 없이 안전하게 멀티를 가져가는 표준 확장 빌드.',
+      tip: '가장 안전한 스탠다드 확장 빌드입니다. 목록에 없는 구간에도 인구수가 허용하는 한 SCV를 계속 뽑아 자원줄을 키우세요.',
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' }, note: '9 서플라이 디폿' },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' }, note: '10 배럭스' },
@@ -207,6 +208,7 @@ const BUILD_ORDERS = {
     {
       id: 't_8rax_rush', name: '8배럭 러시', level: '입문',
       desc: '인구수 8에 배럭스를 올려 마린을 최대한 빨리 뽑는 초반 압박 빌드.',
+      tip: "배럭스를 먼저 짓느라 경제가 느려지는 초반 압박 빌드입니다. 마린을 뽑는 틈틈이 SCV도 최소한 계속 생산해야 후반이 무너지지 않습니다.",
       steps: [
         { trigger: { supply: 8 }, action: { kind: 'build', id: 'barracks' }, note: '8 배럭스' },
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' }, note: '9 서플라이 디폿' },
@@ -217,6 +219,7 @@ const BUILD_ORDERS = {
     {
       id: 't_5rax_marines', name: '5배럭 마린 올인', level: '중급',
       desc: '배럭스 5개를 동시에 돌려 마린 물량으로 밀어붙이는 올인 빌드.',
+      tip: "배럭스 5개를 짓는 동안에도 SCV 생산을 멈추면 안 됩니다 - 자원이 부족하면 배럭스만 있고 마린을 못 뽑습니다. 마린은 자원이 되는 대로 끊임없이 눌러 대기열을 채우세요.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' } },
@@ -231,6 +234,7 @@ const BUILD_ORDERS = {
     {
       id: 't_111_siege_expand', name: '1-1-1 시즈 확장', level: '중급',
       desc: '배럭스-팩토리-스타포트 각 1개씩 올리며 시즈탱크 체제로 넘어가는 확장 빌드.',
+      tip: "배럭스-팩토리-스타포트를 하나씩 늘려 시즈탱크 체제로 넘어가는 빌드입니다. 멀티(2번째 커맨드센터)가 완성될 때까지 SCV 생산을 꾸준히 유지하세요.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' } },
@@ -246,6 +250,7 @@ const BUILD_ORDERS = {
     {
       id: 't_2fact_vulture', name: '2팩토리 벌처 하라스', level: '중급',
       desc: '팩토리 2개로 벌처를 쏟아내 상대 일꾼 라인을 견제하는 빌드.',
+      tip: "팩토리 2개를 돌리는 동안 SCV도 계속 뽑아야 벌처를 끊김 없이 생산할 자원이 나옵니다.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' } },
@@ -260,6 +265,7 @@ const BUILD_ORDERS = {
     {
       id: 't_wraith_rush', name: '레이스 러시', level: '고급',
       desc: '공중 유닛 레이스로 초반 기습을 노리는 테크 러시 빌드.',
+      tip: "테크 러시 빌드라 경제가 다소 느립니다. SCV는 배럭스 짓기 전까지 최대한 뽑아두고, 이후에는 스타포트 테크에 자원을 집중하세요.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' } },
@@ -275,6 +281,7 @@ const BUILD_ORDERS = {
     {
       id: 't_bc_tech', name: '배틀크루저 테크 러시', level: '고급',
       desc: '멀티를 낀 상태로 빠르게 배틀크루저 테크를 올리는 장기전 빌드.',
+      tip: "장기전을 보는 빌드입니다. 멀티를 낀 채로 SCV를 계속 뽑아 자원을 최대한 확보해야 배틀크루저처럼 비싼 유닛을 뽑을 수 있습니다.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' } },
@@ -290,6 +297,7 @@ const BUILD_ORDERS = {
     {
       id: 't_bunker_rush', name: '벙커링', level: '중급',
       desc: '적 진영 앞에 벙커를 박아 초반부터 압박하는 공격적 빌드.',
+      tip: "공격적인 압박 빌드입니다. 벙커링 이후에도 SCV를 몇 기 더 뽑아 경제가 완전히 멈추지 않게 해주세요.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' } },
@@ -302,6 +310,7 @@ const BUILD_ORDERS = {
     {
       id: 't_turtle_fe', name: '터렛 확장 (터틀 FE)', level: '중급',
       desc: '엔지니어링 베이 + 미사일 터렛으로 멀티를 단단하게 방어하는 수비형 확장.',
+      tip: "멀티를 안전하게 지키는 수비형 빌드입니다. 터렛을 올리는 동안에도 SCV 생산은 계속 유지해 두 베이스 모두 일꾼을 채우세요.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' } },
@@ -315,6 +324,7 @@ const BUILD_ORDERS = {
     {
       id: 't_1_1_1_goliath', name: '1배럭 2팩토리 골리앗', level: '고급',
       desc: '골리앗 물량으로 공중 유닛에 강한 지상+대공 조합을 만드는 빌드.',
+      tip: "골리앗 체제로 가는 빌드입니다. 팩토리 2개를 돌릴 자원을 대려면 SCV 생산을 마지막까지 놓치지 마세요.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' } },
@@ -330,6 +340,7 @@ const BUILD_ORDERS = {
     {
       id: 't_valkyrie_def', name: '발키리 방어 빌드', level: '고급',
       desc: '대공 특화 발키리로 상대 공중 유닛을 무력화하는 방어형 빌드.',
+      tip: "대공 방어 특화 빌드입니다. 아머리/스타포트 테크를 타는 동안에도 SCV로 경제를 계속 키워야 발키리를 여러 기 뽑을 수 있습니다.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'barracks' } },
@@ -344,6 +355,7 @@ const BUILD_ORDERS = {
     {
       id: 't_fast_cc', name: '노 배럭 더블 (배럭 없는 확장)', level: '고급',
       desc: '배럭스보다 멀티를 먼저 올리는 극단적 economy 우선 빌드.',
+      tip: "배럭스보다 멀티를 먼저 올리는 경제 최우선 빌드입니다. 그만큼 초반 방어가 약하니 멀티가 완성되자마자 SCV와 배럭스를 동시에 챙기세요.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'supply_depot' } },
         { trigger: { minerals: 400, supply: 10 }, action: { kind: 'build', id: 'command_center' }, note: '배럭 없이 바로 멀티' },
@@ -358,6 +370,7 @@ const BUILD_ORDERS = {
     {
       id: 'z_9pool_ovie', name: '9드론 오버로드 표준', level: '입문',
       desc: '표준적인 저그 시작 빌드. 오버로드로 인구수를 관리하며 안정적으로 풀어나간다.',
+      tip: "저그의 기본 빌드입니다. 오버로드를 제때 뽑지 않으면 인구수가 막혀 드론/저글링을 못 뽑으니 인구수 여유를 항상 1~2 남겨두는 습관을 들이세요.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'train', id: 'overlord' }, note: '9 오버로드' },
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'spawning_pool' }, note: '스포닝 풀' },
@@ -369,6 +382,7 @@ const BUILD_ORDERS = {
     {
       id: 'z_6pool_ling', name: '6풀 저글링 러시', level: '중급',
       desc: '인구수 6에 스포닝 풀을 올려 최대한 빠르게 저글링을 뽑는 초반 러시.',
+      tip: "일꾼 생산도 잠시 미루고 스포닝 풀부터 짓는 초반 올인 빌드입니다. 경제가 매우 약해지니 저글링 러시가 실패하면 이후가 힘들어집니다.",
       steps: [
         { trigger: { supply: 6 }, action: { kind: 'build', id: 'spawning_pool' }, note: '6 스포닝 풀' },
         { trigger: { supply: 8 }, action: { kind: 'train', id: 'overlord' } },
@@ -379,6 +393,7 @@ const BUILD_ORDERS = {
     {
       id: 'z_mutal_tech', name: '뮤탈리스크 테크 러시', level: '고급',
       desc: '레어 - 스파이어로 빠르게 넘어가 뮤탈리스크 다수로 공중 견제를 시작하는 빌드.',
+      tip: "레어-스파이어 테크를 빠르게 타는 빌드입니다. 오버로드를 놓치면 인구수가 막혀 뮤탈리스크를 못 뽑으니 타이밍에 맞춰 미리미리 뽑아두세요.",
       steps: [
         { trigger: { supply: 9 }, action: { kind: 'train', id: 'overlord' } },
         { trigger: { supply: 9 }, action: { kind: 'build', id: 'spawning_pool' } },
@@ -396,6 +411,7 @@ const BUILD_ORDERS = {
     {
       id: 'p_1gate_core', name: '1게이트 사이버네틱스 코어 표준', level: '입문',
       desc: '가장 기본적인 프로토스 스탠다드 빌드. 드라군 테크로 안정적으로 확장한다.',
+      tip: "프로토스의 기본 스탠다드 빌드입니다. 목록에 없는 구간에도 인구수가 허용하는 한 프로브를 계속 뽑아 경제를 키우세요.",
       steps: [
         { trigger: { supply: 8 }, action: { kind: 'build', id: 'pylon' }, note: '8 파일런' },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'gateway' }, note: '게이트웨이' },
@@ -409,6 +425,7 @@ const BUILD_ORDERS = {
     {
       id: 'p_forge_ff', name: '포지 캐논 방어', level: '중급',
       desc: '포지와 포톤 캐논으로 앞마당을 단단히 방어하며 확장하는 수비형 빌드.',
+      tip: "포톤 캐논으로 멀티를 방어하는 수비형 빌드입니다. 캐논을 올리는 동안에도 프로브 생산은 계속 유지하세요.",
       steps: [
         { trigger: { supply: 8 }, action: { kind: 'build', id: 'pylon' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'forge' } },
@@ -421,6 +438,7 @@ const BUILD_ORDERS = {
     {
       id: 'p_dt_rush', name: '다크템플러 러시', level: '고급',
       desc: '시타델 오브 아둔 - 템플러 아카이브로 빠르게 다크템플러를 확보하는 기습 빌드.',
+      tip: "다크템플러 테크 러시라 경제가 다소 느립니다. 템플러 아카이브가 완성될 때까지 프로브 생산을 최대한 유지해 자원을 확보하세요.",
       steps: [
         { trigger: { supply: 8 }, action: { kind: 'build', id: 'pylon' } },
         { trigger: { supply: 10 }, action: { kind: 'build', id: 'gateway' } },
