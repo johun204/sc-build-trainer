@@ -36,16 +36,23 @@ function makeWorker() {
 function workersByJob(job) { return S.workers.filter(w => w.job === job); }
 function totalPatches() { return PATCHES_PER_BASE * completedCount(S.race.mainBuildingId); }
 function patchLoad(i) { return S.workers.filter(w => w.job === 'mineral' && w.patchIndex === i).length; }
+// 가장 일꾼이 적게 붙은 패치 중에서, 그 중에서도 본진과 가장 가까운 패치를 우선 배정
 function assignToPatch(w) {
   const n = totalPatches();
-  let best = 0, bestLoad = Infinity;
-  for (let i = 0; i < n; i++) { const l = patchLoad(i); if (l < bestLoad) { bestLoad = l; best = i; } }
+  let bestLoad = Infinity;
+  for (let i = 0; i < n; i++) { const l = patchLoad(i); if (l < bestLoad) bestLoad = l; }
+  let best = 0, bestDist = Infinity;
+  for (let i = 0; i < n; i++) {
+    if (patchLoad(i) !== bestLoad) continue;
+    const d = patchDistance(i % PATCHES_PER_BASE);
+    if (d < bestDist) { bestDist = d; best = i; }
+  }
   w.job = 'mineral';
   w.patchIndex = best;
   w.buildTypeId = null; w.buildInstId = null;
   w.state = 'toResource';
   w.stateStartAt = S.time;
-  w.stateEndAt = S.time + travelOneWaySec(S.raceId);
+  w.stateEndAt = S.time + patchTravelSec(S.raceId, best % PATCHES_PER_BASE);
 }
 function gasCapacity() { return gasBuildingCount() * GAS_CAP_PER_BUILDING; }
 function assignToGas(w) {
@@ -248,6 +255,7 @@ function startGathering(w, actionSec) {
 }
 
 function tickMineralWorker(w) {
+  const patchMod = w.patchIndex % PATCHES_PER_BASE;
   if (w.state === 'toResource') {
     if (S.time >= w.stateEndAt) {
       const load = patchLoad(w.patchIndex);
@@ -259,12 +267,12 @@ function tickMineralWorker(w) {
     if (S.time >= w.stateEndAt) startGathering(w, mineActionSec());
   } else if (w.state === 'gathering') {
     if (S.time >= w.stateEndAt) {
-      w.state = 'toBase'; w.stateStartAt = S.time; w.stateEndAt = S.time + travelOneWaySec(S.raceId);
+      w.state = 'toBase'; w.stateStartAt = S.time; w.stateEndAt = S.time + patchTravelSec(S.raceId, patchMod);
     }
   } else if (w.state === 'toBase') {
     if (S.time >= w.stateEndAt) {
       S.minerals += MINERALS_PER_TRIP;
-      w.state = 'toResource'; w.stateStartAt = S.time; w.stateEndAt = S.time + travelOneWaySec(S.raceId);
+      w.state = 'toResource'; w.stateStartAt = S.time; w.stateEndAt = S.time + patchTravelSec(S.raceId, patchMod);
     }
   }
 }
@@ -436,6 +444,16 @@ const BV_PATCH_POS = []; // 패치(0~7) 화면 위치(%) 캐시
 for (let i = 0; i < PATCHES_PER_BASE; i++) BV_PATCH_POS.push({ x: 12 + i * (76 / (PATCHES_PER_BASE - 1)), y: 14 });
 const BV_BASE_POS = { x: 50, y: 62 };
 const BV_GAS_POS = { x: 88, y: 80 };
+
+// 패치마다 본진까지 거리가 달라 같은 이동 속도라도 왕복 시간이 다름 (평균 거리 = 기존 실측 이동시간 기준으로 보정)
+function patchDistance(patchIdxMod) {
+  const p = BV_PATCH_POS[patchIdxMod];
+  return Math.hypot(p.x - BV_BASE_POS.x, p.y - BV_BASE_POS.y);
+}
+const AVG_PATCH_DISTANCE = BV_PATCH_POS.reduce((sum, _, i) => sum + patchDistance(i), 0) / PATCHES_PER_BASE;
+function patchTravelSec(raceId, patchIdxMod) {
+  return travelOneWaySec(raceId) * (patchDistance(patchIdxMod) / AVG_PATCH_DISTANCE);
+}
 
 function lerp(a, b, t) { return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t }; }
 function clamp01(t) { return Math.max(0, Math.min(1, t)); }
